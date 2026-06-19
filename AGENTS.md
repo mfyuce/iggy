@@ -113,12 +113,15 @@ Filter single integration test: `cargo test -p integration -- connectors::runtim
 
 Conventional commits with scope: `feat(connectors): ...`. Subject <= 72 chars. Body: why before what. No bullet lists of files changed. Types/scopes enforced by `.github/workflows/pr-title.yml`.
 
-## READY FOR HANDOVER (2026-06-19)
+## READY FOR HANDOVER (2026-06-19, session 2)
 
-**Current state:** All maya-fork commits (8 total) pushed to both `fork` (github.com/mfyuce/iggy) and `ulak` (gitlab.ulakhaberlesme.com.tr/maya/apache_iggy). OTLP->Iggy pipeline live end-to-end in `yucemonitoring` vcluster (~112 msg/s baseline). iggy-server pinned to master1 (kernel 6.8, nodeSelector). Working tree clean.
+**Current state:** 9 maya-fork commits on local master (not yet pushed to remotes). OTLP->Iggy pipeline live end-to-end in `yucemonitoring` vcluster (~112 msg/s baseline). iggy-server pinned to master1 (kernel 6.8, nodeSelector). Working tree clean.
+
+**Completed this session:**
+- `fix(server): decouple thread_pool_limit from COOP_TASKRUN` (commit `0f0e8d24`). `create_shard_executor` now takes `keep_worker_pool: bool`; both server and server-ng pass `tcp.enabled || http.enabled || websocket.enabled`. Operators can now set `IGGY_SHARD_RUNTIME_COOP_TASKRUN=true` on kernel 6.8 with TCP transport without the asyncify panic. Push to fork/ulak and update iggy-server deploy to remove the `COOP_TASKRUN=false` env override.
 
 **Next session tasks:**
-1. Decouple COOP_TASKRUN from `thread_pool_limit(0)` in `core/server/src/executor.rs` -- currently `IGGY_SHARD_RUNTIME_COOP_TASKRUN=false` kept even on 6.8 because zero-worker pool panics TCP/HTTP/WS servers. Fix: keep worker pool whenever TCP/HTTP is enabled, regardless of COOP_TASKRUN.
+1. Push commits to `fork` (github.com/mfyuce/iggy) and `ulak` (gitlab.ulakhaberlesme.com.tr/maya/apache_iggy), rebuild iggy-server image, remove `IGGY_SHARD_RUNTIME_COOP_TASKRUN=false` from `anomaly/deploy/iggy-server.yaml`.
 2. Upgrade remaining 4 nodes (master2/3, worker1/2) from kernel 5.15 to 6.8, then remove `nodeSelector: kubernetes.io/hostname=master1` from iggy-server deploy.
 3. Measure iggy throughput: add `--bin iggy-bench` to `core/server/Dockerfile`, rebuild image, run bench for raw peak + latency p50/p99. Also probe `data-gen` pod in `yucemonitoring` as OTLP load generator.
 4. Drop `compression: none` from OTel collector iggy exporters once rebuilt connector image with native gzip is deployed.
