@@ -31,6 +31,7 @@ use opentelemetry_proto::tonic::collector::trace::v1::{
 };
 use std::net::SocketAddr;
 use tokio::sync::{mpsc, oneshot};
+use tonic::codec::CompressionEncoding;
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
@@ -45,10 +46,24 @@ pub async fn run_grpc_server(
 
     info!("OTLP gRPC server starting on {addr}");
 
+    // OTel SDKs and the Collector's OTLP exporter gzip-compress payloads by
+    // default, so every service must accept gzip on the wire. Responses are tiny
+    // (empty partial_success), but advertising gzip on send is harmless and lets
+    // clients negotiate it.
+    let logs_server = LogsServiceServer::new(logs_svc)
+        .accept_compressed(CompressionEncoding::Gzip)
+        .send_compressed(CompressionEncoding::Gzip);
+    let metrics_server = MetricsServiceServer::new(metrics_svc)
+        .accept_compressed(CompressionEncoding::Gzip)
+        .send_compressed(CompressionEncoding::Gzip);
+    let trace_server = TraceServiceServer::new(trace_svc)
+        .accept_compressed(CompressionEncoding::Gzip)
+        .send_compressed(CompressionEncoding::Gzip);
+
     if let Err(err) = tonic::transport::Server::builder()
-        .add_service(LogsServiceServer::new(logs_svc))
-        .add_service(MetricsServiceServer::new(metrics_svc))
-        .add_service(TraceServiceServer::new(trace_svc))
+        .add_service(logs_server)
+        .add_service(metrics_server)
+        .add_service(trace_server)
         .serve_with_shutdown(addr, async {
             let _ = shutdown.await;
             info!("OTLP gRPC server received shutdown signal");

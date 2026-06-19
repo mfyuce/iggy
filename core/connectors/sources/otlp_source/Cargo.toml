@@ -54,5 +54,5 @@ opentelemetry-proto = { version = "0.32.0", default-features = false, features =
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tonic = { workspace = true, features = ["transport", "router"] }
+tonic = { workspace = true, features = ["transport", "router", "gzip"] }
 tracing = { workspace = true }
