@@ -90,10 +90,19 @@ async fn create_client(
     let username = config.username.to_owned();
     let password = config.password.to_owned();
 
+    // Connection-string scheme by transport. "iggy://" is TCP; "iggy+quic://"
+    // routes the client over QUIC, which is the only working transport on
+    // kernels < 5.19 (the server's TCP/HTTP io_uring listeners can't bind there).
+    let scheme = match config.transport.as_deref() {
+        Some("quic") => "iggy+quic://",
+        Some("http") => "iggy+http://",
+        _ => "iggy://",
+    };
+
     let connection_string = if let Some(token) = token {
         let redacted_token = token.chars().take(3).collect::<String>();
         info!("Using token: {redacted_token}*** for Iggy authentication");
-        format!("iggy://{token}@{address}")
+        format!("{scheme}{token}@{address}")
     } else {
         info!("Using username and password for Iggy authentication");
         if username.is_empty() {
@@ -111,7 +120,7 @@ async fn create_client(
         info!(
             "Using username: {redacted_username}***, password: {redacted_password}*** for Iggy authentication"
         );
-        format!("iggy://{username}:{password}@{address}")
+        format!("{scheme}{username}:{password}@{address}")
     };
 
     let connection_string = if config.tls.enabled {

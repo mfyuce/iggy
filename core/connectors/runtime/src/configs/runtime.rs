@@ -226,6 +226,11 @@ pub struct IggyConfig {
     #[config_env(secret)]
     pub token: String,
     pub tls: IggyTlsConfig,
+    /// Client transport: "tcp" (default), "quic", or "http". Selects the
+    /// connection-string scheme. QUIC is needed on kernels < 5.19 where the
+    /// server's TCP/HTTP io_uring listeners cannot bind but QUIC (UDP) can.
+    #[serde(default)]
+    pub transport: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, ConfigEnv)]
@@ -420,6 +425,7 @@ impl Default for IggyConfig {
             password: DEFAULT_ROOT_PASSWORD.to_owned(),
             token: "".to_owned(),
             tls: IggyTlsConfig::default(),
+            transport: None,
         }
     }
 }
