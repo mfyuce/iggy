@@ -1,132 +1,66 @@
 # Apache Iggy Agent Guidelines
 
-**Apache Iggy (Incubating)** is a persistent message streaming platform
-in Rust. Thread-per-core shared-nothing, `io_uring` + `compio`.
-Transports: QUIC, WebSocket, TCP (custom binary), HTTP (REST). SDKs:
-Rust, .NET, Java, Python, Go, C++, Node.js. A connectors subsystem
-ingests from / egresses to external systems via dlopened plugins.
+**Apache Iggy (Incubating)** — persistent message streaming in Rust. Thread-per-core shared-nothing, `io_uring` + `compio`. Transports: QUIC, WebSocket, TCP (binary), HTTP. A connectors subsystem ingests/egresses via dlopened plugins.
 
-> Skills under `.claude/skills/` are currently scoped to the
-> **connectors** subsystem (`core/connectors/`). Load
-> [connectors-overview](.claude/skills/connectors-overview/SKILL.md)
-> first for any change there. Other subsystems follow the repo-wide
-> principles in this file.
-
-## Contents
-
-- [Apache Iggy Agent Guidelines](#apache-iggy-agent-guidelines)
-  - [Contents](#contents)
-  - [STOP and ask the user before](#stop-and-ask-the-user-before)
-  - [Quick reference](#quick-reference)
-  - [Structure](#structure)
-  - [Where to look](#where-to-look)
-  - [Skills](#skills)
-  - [Repo-wide principles](#repo-wide-principles)
-  - [Tooling](#tooling)
-  - [Testing](#testing)
-  - [Pitfalls](#pitfalls)
-  - [Local state directories](#local-state-directories)
-  - [Commits, PRs, releases](#commits-prs-releases)
-  - [Discussion and support](#discussion-and-support)
+> Skills under `.claude/skills/` are scoped to **connectors** (`core/connectors/`). Load [connectors-overview](.claude/skills/connectors-overview/SKILL.md) first for any change there.
 
 ## STOP and ask the user before
 
-- Bumping `iggy_connector_sdk` MAJOR version or changing any FFI
-  signature in `core/connectors/sdk/src/{sink,source}.rs` (breaks
-  every pre-built plugin .so).
-- Modifying `core/binary_protocol/` wire-format types tagged
-  `#[repr(C)]` (breaks every running client).
-- Touching the state-save path (`core/connectors/runtime/src/state.rs`)
-  in a way that changes the atomic-rename protocol (corruption risk).
-- Renaming default consumer groups, plugin path resolution rules, or
-  any other operator-facing identifier.
-- Force-pushing to `master`, amending shipped commits, or skipping
-  hooks with `--no-verify` / `--no-gpg-sign`.
+- Bumping `iggy_connector_sdk` MAJOR version or changing any FFI signature in `core/connectors/sdk/src/{sink,source}.rs` (breaks every pre-built plugin .so).
+- Modifying `core/binary_protocol/` wire-format types tagged `#[repr(C)]` (breaks every running client).
+- Touching `core/connectors/runtime/src/state.rs` in a way that changes the atomic-rename protocol (corruption risk).
+- Renaming default consumer groups, plugin path resolution rules, or any operator-facing identifier.
+- Force-pushing to `master`, amending shipped commits, or skipping hooks with `--no-verify` / `--no-gpg-sign`.
 
 ## Quick reference
 
 ```bash
-# Verification order is enforced by CI (.github/actions/rust/pre-merge).
+# Verification order enforced by CI (.github/actions/rust/pre-merge)
 cargo fmt --all                                            # step 1
-cargo sort --no-format --workspace                         # step 2 (--no-format mandatory)
+cargo sort --no-format --workspace                         # step 2  (--no-format mandatory)
 cargo clippy --all-features --all-targets -- -D warnings   # step 3
 cargo test -p <crate>                                      # step 4
 
-# Other CI checks (mirror in pre-commit; pass --fix where supported)
+# Other CI checks
 ./scripts/ci/taplo.sh             # TOML
 ./scripts/ci/markdownlint.sh      # Markdown
 ./scripts/ci/shellcheck.sh        # Shell
 ./scripts/ci/license-headers.sh   # Apache headers
-./scripts/ci/trailing-whitespace.sh
-./scripts/ci/trailing-newline.sh
-./scripts/ci/sync-rustc-version.sh
-./scripts/ci/python-sdk-version-sync.sh
-./scripts/ci/uv-lock-check.sh
-./scripts/ci/binary-artifacts.sh --check
-./scripts/ci/third-party-licenses.sh --validate --manifest <path>
+./scripts/ci/trailing-whitespace.sh && ./scripts/ci/trailing-newline.sh
 
-# Run things
+# Run
 cargo run --bin iggy-server
 cargo run --bin iggy -- <subcommand>
 IGGY_CONNECTORS_CONFIG_PATH=... cargo run --bin iggy-connectors
 ./scripts/run-bdd-tests.sh
-./scripts/run-benches.sh
 ```
 
-Pre-commit hooks wire the same scripts. Install with `pre-commit
-install` (Python) or `prek install` (Rust drop-in) - both read
-`.pre-commit-config.yaml`.
+Pre-commit hooks wire the same scripts. Install: `pre-commit install` or `prek install`.
 
 ## Structure
 
 ```text
-iggy/
-├── core/
-│   ├── server/           Iggy server binary
-│   ├── server-ng/        Next-gen server (Viewstamped Replication, WIP)
-│   ├── sdk/              Rust client SDK
-│   ├── cli/              iggy CLI
-│   ├── connectors/       Connectors runtime + SDK + sinks/sources
-│   ├── common/           Shared types (IggyDuration, IggyTimestamp, ...)
-│   ├── binary_protocol/  Wire format (stable)
-│   ├── configs/          Config plumbing + ConfigEnv derive
-│   ├── ai/mcp/           MCP server
-│   ├── bench/            Benchmark suite
-│   ├── integration/      Cross-crate integration tests
-│   ├── simulator/        Deterministic simulator
-│   ├── consensus/        Raft (Miri-checked unsafe iobuf)
-│   ├── journal/          WAL / journal
-│   ├── message_bus/      In-process bus
-│   ├── shard/            Shard runtime
-│   ├── harness_derive/   #[iggy_harness] proc macro
-│   └── metadata, partitions, server_common, configs_derive, clock, tools
-├── foreign/              Java / .NET / Python / Go / C++ / Node.js SDKs
-├── bdd/                  Cross-language BDD (Gherkin)
-├── examples/             Per-SDK runnable examples
-├── helm/                 Helm charts
-├── web/                  Web UI
-└── scripts/              CI + release + dev scripts
+iggy/core/
+  server/           server binary
+  server-ng/        next-gen server (Viewstamped Replication, WIP)
+  sdk/              Rust client SDK
+  cli/              iggy CLI
+  connectors/       runtime + SDK + sinks/sources
+  common/           shared types
+  binary_protocol/  wire format (stable, #[repr(C)])
+  configs/          config plumbing + ConfigEnv derive
+  integration/      cross-crate integration tests
+  consensus/        Raft (Miri-checked unsafe iobuf)
+iggy/foreign/       Java/.NET/Python/Go/C++/Node.js SDKs
+iggy/bdd/           Gherkin BDD (all SDKs)
+iggy/scripts/       CI + release + dev scripts
 ```
 
-## Where to look
+## Skills (connectors-scoped)
 
-| Task                  | Location                                 |
-| --------------------- | ---------------------------------------- |
-| Wire protocol         | `core/binary_protocol/`                  |
-| Server                | `core/server/src/`                       |
-| Next-gen server (WIP) | `core/server-ng/`                        |
-| Rust client SDK       | `core/sdk/src/`                          |
-| Connectors            | `core/connectors/` -> connector-* skills |
-| Integration tests     | `core/integration/tests/`                |
-| Cross-SDK BDD         | `bdd/`                                   |
-| Benchmark suite       | `core/bench/`                            |
+Load `connectors-overview` first as router.
 
-## Skills
-
-Connectors-scoped. Each `SKILL.md` has YAML frontmatter (name,
-description). Load `connectors-overview` first as router.
-
-- [connectors-overview](.claude/skills/connectors-overview/SKILL.md) - router + universal connector rules
+- [connectors-overview](.claude/skills/connectors-overview/SKILL.md) - router + universal rules
 - [connector-runtime](.claude/skills/connector-runtime/SKILL.md) - FFI host, lifecycle, state, metrics
 - [connector-sdk](.claude/skills/connector-sdk/SKILL.md) - traits, decoders/encoders, retry
 - [connector-sink](.claude/skills/connector-sink/SKILL.md) - sink plugin authoring
@@ -136,91 +70,57 @@ description). Load `connectors-overview` first as router.
 
 ## Repo-wide principles
 
-1. **Apache 2.0 header on every new source file:** Follow the comment style configured in `licenserc.toml`; common examples: `.rs` uses `// ...`, `Cargo.toml` and shell use `# ...`.
-2. **Verification order:** `fmt --all` -> `sort --no-format --workspace` -> `clippy --all-features --all-targets -- -D warnings` -> `test`. Plus `taplo.sh --check`. CI enforces all.
-3. **Always pass `--no-format` to `cargo sort`.** Without it multi-line feature arrays flatten and `taplo` re-expands them, churning the workspace.
-4. **Avoid LLM-slop tells: em dashes, gratuitous semicolons, hedging narrative, trailing summaries.** Defaults, not absolute bans. Same rule for code, comments, commits, PR descriptions.
-5. **Idiomatic Rust over free helpers.** `FromStr` not `parse_foo`, `Display` not `format_foo`, `From`/`TryFrom` not `to_foo_from_bar`. Structured `Err` enums, not `String`.
-6. **Imports at the top.** No inline `use` inside functions or blocks. Group: std, external crates, then `crate::`.
+1. **Apache 2.0 header on every new source file.** Follow `licenserc.toml`; `.rs` uses `// ...`, `Cargo.toml`/shell use `# ...`.
+2. **Verification order:** `fmt --all` -> `sort --no-format --workspace` -> `clippy --all-features --all-targets -- -D warnings` -> `test`. CI enforces all.
+3. **Always pass `--no-format` to `cargo sort`.** Without it multi-line feature arrays flatten and `taplo` re-expands them.
+4. **No LLM-slop:** em dashes, gratuitous semicolons, hedging narrative, trailing summaries.
+5. **Idiomatic Rust.** `FromStr` not `parse_foo`, `Display` not `format_foo`, `From`/`TryFrom` not `to_foo_from_bar`. Structured `Err` enums, not `String`.
+6. **Imports at the top.** No inline `use` inside functions. Group: std, external, `crate::`.
 7. **Precise names.** No `b`, `p`, `t`, `m`. Match literal API field names as log labels.
-8. **Comments explain WHY, not WHAT.** Default to no comment. Add one only when a hidden constraint or workaround would surprise a future reader. Never reference the current task / PR.
-9. **Never `cargo install`** without authorization. Toolchain pinned in `rust-toolchain.toml`. CI installs additional cargo tools on demand.
+8. **Comments explain WHY, not WHAT.** No comment by default. Never reference the current task/PR.
+9. **Never `cargo install`** without authorization. Toolchain pinned in `rust-toolchain.toml`.
 10. **No `unwrap()` / `expect()` on Results from external I/O** outside tests.
-11. **`tokio::sync::Mutex` (not `std::sync::Mutex`)** wherever a lock is held across `.await`. Hold locks briefly: lock, clone, drop guard, then do I/O.
-12. **Code reads top to bottom.** Public consts and public fns first, helpers below, deeper helpers below those.
+11. **`tokio::sync::Mutex`** (not `std::sync::Mutex`) wherever a lock is held across `.await`. Lock, clone, drop guard, then do I/O.
+12. **Code reads top to bottom.** Public consts/fns first, helpers below.
 13. **Zero clone in hot loops.** `&self`, `&str`, `&[T]`. `Vec::with_capacity(n)` when size is known.
 14. **Forward-compatible config.** New TOML fields use `#[serde(default)]` or `Option<T>`.
 
-## Tooling
-
-| Tool                                          | Where                                       |
-| --------------------------------------------- | ------------------------------------------- |
-| `cargo fmt`, `cargo sort`, `cargo clippy`     | pre-commit + CI                             |
-| `cargo machete`                               | CI `machete` task                           |
-| `cargo nextest` + `cargo-rail`                | CI `test-*` DAG-scoped                      |
-| `cargo llvm-cov`                              | CI coverage                                 |
-| `cargo http-registry`                         | CI `verify-publish`                         |
-| Miri                                          | CI `miri` (`binary_protocol` + `consensus`) |
-| `taplo`, `markdownlint-cli`, `shellcheck`     | pre-commit + CI                             |
-| `typos`                                       | pre-commit                                  |
-| `cargo about` + `license-checker-rseidelsohn` | `scripts/ci/third-party-licenses.sh`        |
-| HawkEye / `license-headers.sh`                | pre-commit + CI                             |
-| `uv`, `ruff`                                  | pre-commit (Python)                         |
-| `golangci-lint`                               | pre-push (Go)                               |
-
 ## Testing
 
-- **Unit:** `#[cfg(test)] mod tests` at EOF of `src/lib.rs` (or per-module).
+- **Unit:** `#[cfg(test)] mod tests` at EOF of `src/lib.rs` or per-module.
 - **In-crate integration:** `<crate>/tests/`.
-- **Cross-crate (real infra):** `core/integration/tests/`. Harness in
-  `core/integration/src/harness/` spawns real `iggy-server`
-  (`ServerHandle`), connectors runtime (`ConnectorsRuntimeHandle`),
-  MCP server (`McpHandle`), client (`ClientHandle`). `#[iggy_harness]`
-  proc macro wires fixtures. Suites: `cli/`, `cluster/`,
-  `config_provider/`, `connectors/`, `data_integrity/`, `mcp/`, `sdk/`,
-  `server/`, `state/`, `storage/`. External backends inside
-  `connectors/` use `testcontainers-modules`. Per-test logs land in
-  `test_logs/`.
-- **Cross-SDK BDD:** `bdd/`. Gherkin features against every SDK. Driver: `scripts/run-bdd-tests.sh`.
+- **Cross-crate (real infra):** `core/integration/tests/`. `#[iggy_harness]` macro wires `ServerHandle`, `ConnectorsRuntimeHandle`, `ClientHandle`. External backends use `testcontainers-modules`. Logs in `test_logs/`.
+- **BDD:** `bdd/`. Driver: `scripts/run-bdd-tests.sh`.
 
-BDD test naming: `given_X_when_Y_should_Z` (3-part). Promote to 4-part `given_X_when_Y_then_Z_should_W` only with a distinct "then" intermediate. Be consistent inside a file.
+BDD test naming: `given_X_when_Y_should_Z`. 4-part only when a distinct "then" intermediate exists.
 
-Filter a single integration test by path:
-
-```bash
-cargo test -p integration -- connectors::runtime::benchmark::given_logging_format_json
-```
+Filter single integration test: `cargo test -p integration -- connectors::runtime::benchmark::given_logging_format_json`
 
 ## Pitfalls
 
-- **Docker is required for most integration tests.** `testcontainers-modules` spawns containers per test.
-- **`cargo sort` without `--no-format` will churn the workspace.** Use the pre-commit hook.
-- **Rust toolchain is pinned in `rust-toolchain.toml`.** Older system `cargo` fails on transitive deps. prefer rustup so the pin auto-resolves.
-- **`test_logs/` grows quickly.** Wipe between major refactors.
-- **Miri only covers `binary_protocol` + `consensus`.** Cannot emulate `io_uring` syscalls. do not try to expand Miri to crates that pull `compio`.
+- **Docker required for most integration tests** (`testcontainers-modules` spawns containers).
+- **`cargo sort` without `--no-format` churns the workspace.**
+- **Rust toolchain pinned in `rust-toolchain.toml`.** Use rustup so the pin auto-resolves.
+- **Miri only covers `binary_protocol` + `consensus`.** Cannot emulate `io_uring`; do not expand to crates pulling `compio`.
 - **Integration crate has no `--test` target.** Filter by test path inside the single `mod.rs` binary.
+- **`test_logs/` grows quickly.** Wipe between major refactors.
 
-## Local state directories
+## Local state (gitignored, safe to delete)
 
-Created by server, connectors runtime, or tests. Gitignored. Safe to delete to reset:
-
-- `local_data/` - server data
-- `local_state/` - connectors runtime state files
-- `test_logs/` - per-test logs + `local_data` snapshots
-- `performance_results/` - benchmark output
-- `target/` - cargo build
+`local_data/` - server data | `local_state/` - connectors state | `test_logs/` - per-test logs | `performance_results/` - bench output | `target/` - build
 
 ## Commits, PRs, releases
 
-- Conventional commits with scope: `feat(connectors): ...`. Subject <= 72 chars. Allowed types/scopes enforced by `.github/workflows/pr-title.yml`.
-- Body: why before what. No bullet lists of files changed.
-- Co-authored-by trailer when applicable.
-- Workspace + SDK versions sync via `scripts/extract-version.sh` and `scripts/ci/{sync-rust,python-sdk}-version{,-sync}.sh`.
-- Crate publish chain verified by `scripts/verify-crates-publish.sh` against `cargo-http-registry`.
-- Third-party license enumeration: `scripts/ci/third-party-licenses.sh` (ASF policy).
+Conventional commits with scope: `feat(connectors): ...`. Subject <= 72 chars. Body: why before what. No bullet lists of files changed. Types/scopes enforced by `.github/workflows/pr-title.yml`.
 
-## Discussion and support
+## READY FOR HANDOVER (2026-06-19)
 
-- Design: <https://github.com/apache/iggy/discussions>
-- Chat: <https://discord.gg/apache-iggy>
-- Docs: <https://iggy.apache.org/docs/>
+**Current state:** All maya-fork commits (8 total) pushed to both `fork` (github.com/mfyuce/iggy) and `ulak` (gitlab.ulakhaberlesme.com.tr/maya/apache_iggy). OTLP->Iggy pipeline live end-to-end in `yucemonitoring` vcluster (~112 msg/s baseline). iggy-server pinned to master1 (kernel 6.8, nodeSelector). Working tree clean.
+
+**Next session tasks:**
+1. Decouple COOP_TASKRUN from `thread_pool_limit(0)` in `core/server/src/executor.rs` -- currently `IGGY_SHARD_RUNTIME_COOP_TASKRUN=false` kept even on 6.8 because zero-worker pool panics TCP/HTTP/WS servers. Fix: keep worker pool whenever TCP/HTTP is enabled, regardless of COOP_TASKRUN.
+2. Upgrade remaining 4 nodes (master2/3, worker1/2) from kernel 5.15 to 6.8, then remove `nodeSelector: kubernetes.io/hostname=master1` from iggy-server deploy.
+3. Measure iggy throughput: add `--bin iggy-bench` to `core/server/Dockerfile`, rebuild image, run bench for raw peak + latency p50/p99. Also probe `data-gen` pod in `yucemonitoring` as OTLP load generator.
+4. Drop `compression: none` from OTel collector iggy exporters once rebuilt connector image with native gzip is deployed.
+
+**Open decision:** Whether to upstream the COOP_TASKRUN/thread_pool decoupling fix to apache/iggy as a separate PR (the OTLP source PR must NOT include it).
