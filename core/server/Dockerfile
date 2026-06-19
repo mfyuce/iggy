@@ -71,10 +71,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARG
     esac && \
     if [ "$PROFILE" = "debug" ]; then \
     cargo chef cook --recipe-path recipe.json --target ${RUST_TARGET} --zigbuild \
-      -p server -p iggy-cli; \
+      -p server -p iggy-cli -p iggy-bench; \
     else \
     cargo chef cook --recipe-path recipe.json --target ${RUST_TARGET} --zigbuild --release \
-      -p server -p iggy-cli; \
+      -p server -p iggy-cli -p iggy-bench; \
     fi
 
 COPY . .
@@ -93,13 +93,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARG
     *) echo "Unsupported $TARGETPLATFORM/$LIBC" && exit 1 ;; \
     esac && \
     if [ "$PROFILE" = "debug" ]; then \
-    cargo zigbuild --locked --target ${RUST_TARGET} --bin iggy-server --bin iggy && \
+    cargo zigbuild --locked --target ${RUST_TARGET} --bin iggy-server --bin iggy --bin iggy-bench && \
     cp /app/target/${RUST_TARGET}/debug/iggy-server /app/iggy-server && \
-    cp /app/target/${RUST_TARGET}/debug/iggy /app/iggy; \
+    cp /app/target/${RUST_TARGET}/debug/iggy /app/iggy && \
+    cp /app/target/${RUST_TARGET}/debug/iggy-bench /app/iggy-bench; \
     else \
-    cargo zigbuild --locked --target ${RUST_TARGET} --bin iggy-server --bin iggy --release && \
+    cargo zigbuild --locked --target ${RUST_TARGET} --bin iggy-server --bin iggy --bin iggy-bench --release && \
     cp /app/target/${RUST_TARGET}/release/iggy-server /app/iggy-server && \
-    cp /app/target/${RUST_TARGET}/release/iggy /app/iggy; \
+    cp /app/target/${RUST_TARGET}/release/iggy /app/iggy && \
+    cp /app/target/${RUST_TARGET}/release/iggy-bench /app/iggy-bench; \
     fi
 
 # Generate third-party license manifest. Required by ASF release policy:
@@ -111,6 +113,7 @@ RUN TARGET="$(uname -m)-unknown-linux-musl" && \
     ./scripts/ci/third-party-licenses.sh --generate \
       --manifest core/server/Cargo.toml \
       --manifest core/cli/Cargo.toml \
+      --manifest core/bench/Cargo.toml \
       --manifest web \
       --output /app/LICENSE-binary
 
@@ -138,6 +141,7 @@ RUN TARGET="$(uname -m)-unknown-linux-musl" && \
     ./scripts/ci/third-party-licenses.sh --generate \
       --manifest core/server/Cargo.toml \
       --manifest core/cli/Cargo.toml \
+      --manifest core/bench/Cargo.toml \
       --manifest web \
       --output /app/LICENSE-binary
 
@@ -182,8 +186,9 @@ RUN apt-get update && apt-get install -y \
     libudev1 \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/iggy-server /usr/local/bin/iggy-server
-COPY --from=builder /app/iggy        /usr/local/bin/iggy
+COPY --from=builder /app/iggy-server  /usr/local/bin/iggy-server
+COPY --from=builder /app/iggy         /usr/local/bin/iggy
+COPY --from=builder /app/iggy-bench   /usr/local/bin/iggy-bench
 COPY --from=builder /app/LICENSE-binary /usr/share/doc/iggy/LICENSE-binary
 COPY LICENSE NOTICE /usr/share/doc/iggy/
 RUN echo "═══════════════════════════════════════════════════════════════" && \
@@ -204,7 +209,7 @@ RUN echo "═══════════════════════�
     (command -v file >/dev/null 2>&1 && file /usr/local/bin/iggy-server | sed 's/^/  /' || \
     echo "  $(ldd /usr/local/bin/iggy-server 2>&1 | head -1)") && \
     echo "Binary Size:" && \
-    ls -lh /usr/local/bin/iggy-server /usr/local/bin/iggy | awk '{print "  " $9 ": " $5}' && \
+    ls -lh /usr/local/bin/iggy-server /usr/local/bin/iggy /usr/local/bin/iggy-bench | awk '{print "  " $9 ": " $5}' && \
     echo "Build Date:     $(date -u '+%Y-%m-%d %H:%M:%S UTC')" && \
     echo "═══════════════════════════════════════════════════════════════"
 ENTRYPOINT ["iggy-server"]
