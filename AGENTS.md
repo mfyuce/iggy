@@ -15,24 +15,21 @@
 ## Quick reference
 
 ```bash
-# CI verification order (.github/actions/rust/pre-merge)
+# Pre-merge CI
 cargo fmt --all
-cargo sort --no-format --workspace          # --no-format mandatory
+cargo sort --no-format --workspace    # --no-format mandatory
 cargo clippy --all-features --all-targets -- -D warnings
 cargo test -p <crate>
-
-# Other CI checks
-./scripts/ci/taplo.sh && ./scripts/ci/markdownlint.sh && ./scripts/ci/shellcheck.sh
-./scripts/ci/license-headers.sh && ./scripts/ci/trailing-whitespace.sh && ./scripts/ci/trailing-newline.sh
-
+# Other CI
+./scripts/ci/{taplo,markdownlint,shellcheck,license-headers,trailing-whitespace,trailing-newline}.sh
 # Run
 cargo run --bin iggy-server
-cargo run --bin iggy -- <subcommand>
+cargo run --bin iggy -- <sub>
 IGGY_CONNECTORS_CONFIG_PATH=... cargo run --bin iggy-connectors
 ./scripts/run-bdd-tests.sh
 ```
 
-Pre-commit hooks wire the same scripts. Install: `pre-commit install` or `prek install`.
+Hooks: `pre-commit install` or `prek install`.
 
 ## Structure
 
@@ -42,9 +39,6 @@ core/server-ng/       next-gen server (Viewstamped Replication, WIP)
 core/sdk/             Rust client SDK
 core/cli/             iggy CLI
 core/connectors/      runtime + SDK + sinks/sources
-core/common/          shared types
-core/binary_protocol/ wire format (stable, #[repr(C)])
-core/configs/         config plumbing + ConfigEnv derive
 core/integration/     cross-crate integration tests
 core/consensus/       Raft (Miri-checked unsafe iobuf)
 foreign/              Java/.NET/Python/Go/C++/Node.js SDKs
@@ -67,8 +61,8 @@ bdd/                  Gherkin BDD (all SDKs)
 2. **Verification order:** `fmt --all` → `sort --no-format --workspace` → `clippy --all-features -- -D warnings` → `test`. CI enforces.
 3. **`--no-format` for `cargo sort`** always. Without it feature arrays flatten and `taplo` re-expands them.
 4. **No LLM-slop:** em dashes, gratuitous semicolons, hedging narrative, trailing summaries.
-5. **Idiomatic Rust.** `FromStr`/`Display`/`From`/`TryFrom`. Structured `Err` enums, not `String`. No `unwrap()`/`expect()` on external I/O outside tests.
-6. **Imports at the top.** Group: std → external → `crate::`. No inline `use` inside functions.
+5. **Idiomatic Rust.** `FromStr`/`Display`/`From`/`TryFrom`. Structured `Err` enums. No `unwrap()`/`expect()` on external I/O outside tests.
+6. **Imports at top.** Group: std → external → `crate::`. No inline `use` inside functions.
 7. **Precise names.** No `b`, `p`, `t`, `m`. Match literal API field names as log labels.
 8. **Comments explain WHY.** No comment by default. Never reference the current task/PR.
 9. **Never `cargo install`** without authorization. Toolchain pinned in `rust-toolchain.toml`.
@@ -99,10 +93,10 @@ Conventional commits: `feat(connectors): ...`. Subject ≤ 72 chars. Body: why b
 - Node SSH: `maya@<ip>`, password `test123`. Ubuntu 22.04, kernel 6.8.0-124.
 - kubeconfig: `~/.kube/yucemonitoring.config`, ns `yucemonitoring`, `--insecure-skip-tls-verify`.
 
-## READY FOR HANDOVER (2026-06-20, session 6)
+## READY FOR HANDOVER (2026-06-20, session 7)
 
-**Current state:** OTLP→Iggy pipeline live in `yucemonitoring`. All infra tasks done. Working tree clean. `fork/master` and `ulak/master` in sync with local `master`. AGENTS.md slimmed (~25% smaller).
+**Current state:** OTLP source PR #3516 submitted to `apache/iggy`, awaiting review. OTLP→Iggy pipeline live in `yucemonitoring`. Working tree clean. All remotes (`fork`, `ulak`) synced. `origin/master` diverges by design (17 local commits ahead).
 
-**Next steps:** See TODO.md. Primarily: OTLP source PR to `apache/iggy` (standalone, must NOT include COOP_TASKRUN fix). Decide whether to upstream COOP_TASKRUN fix separately (see TOBEDECIDED.md).
+**Next steps:** Monitor PR #3516 for reviewer feedback and address comments. Decide COOP_TASKRUN upstream PR (see TOBEDECIDED.md). Track `server-ng` maturity for HA (see TODO.md).
 
-**Open decisions:** COOP_TASKRUN upstream PR — options and context in TOBEDECIDED.md.
+**Open decisions:** COOP_TASKRUN upstream PR — upstream as standalone fix or keep only in maya fork. See TOBEDECIDED.md.
