@@ -113,28 +113,15 @@ Filter single integration test: `cargo test -p integration -- connectors::runtim
 
 Conventional commits with scope: `feat(connectors): ...`. Subject <= 72 chars. Body: why before what. No bullet lists of files changed. Types/scopes enforced by `.github/workflows/pr-title.yml`.
 
-## READY FOR HANDOVER (2026-06-20, session 4)
+## Infra quick-ref (yucemonitoring vcluster)
 
-**Current state:** All pipeline tasks complete. OTLP→Iggy live in `yucemonitoring` vcluster. All 5 nodes on kernel 6.8.0-124. iggy pod on master2, COOP_TASKRUN=true, no nodeSelector. Working tree clean.
-
-**Completed this session:**
-- All 4 remaining nodes (master2/3, worker1/2) upgraded kernel 5.15 → 6.8.0-124 (drain→apt→reboot→uncordon). master2 had corrupt dpkg format file; fixed with `rm /var/lib/dpkg/info/format` + `--force-confdef --force-confold`.
-- `nodeSelector: kubernetes.io/hostname=master1` removed from iggy deploy; pod now schedulable on any node (currently master2).
-- gzip enabled on two layers:
-  - OTel collector → iggy-connectors (gRPC wire): `compression: none` → `compression: gzip` in `maya-collector-configmap`, `maya-monitoring-config-management` restarted.
-  - iggy topic storage: `compression_algorithm: none` → `gzip` on all 4 otel topics via HTTP API.
-  - otlp_source connector already had `tonic = { features = ["gzip"] }` + `accept_compressed(Gzip)` — no rebuild needed.
-- PVC `iggy-data` expanded 5 Gi → 20 Gi; retention 24h → 6h. Expected steady-state ~1.5-2 GB (uncompressed), less with gzip.
-- Bench 1 (PinnedProducerAndConsumer, 8P+8C, 1 GiB, NodePort/LAN): Producers 49 MB/s, p50=150 ms, p99=439 ms. NodePort adds ~150 ms RTT; loopback would be 5-10× faster.
-- Bench 2 (OTLP load): RATE=10 → ~1100 msg/s, iggy CPU <1%, zero errors.
-
-**Open decision:** Whether to upstream the COOP_TASKRUN/thread_pool decoupling fix to apache/iggy as a separate PR (the OTLP source PR must NOT include it).
-
-**Remaining work:**
-- OTLP source PR to apache/iggy (separate from COOP_TASKRUN fix).
-- `server-ng` (Viewstamped Replication) maturity tracking for HA.
-
-**Infra notes:**
-- iggy-bench: `/home/fatihyuce/.cargo-target/release/iggy-bench` (CARGO_TARGET_DIR). Run via NodePort `10.20.4.31:31921` (TCP). Cannot add to Docker image (charming/ssr → v8 → Alpine/musl fail).
 - iggy HTTP API: `http://10.20.4.31:31920` (no `/api` prefix). Auth: POST `/users/login` `{"username":"iggy","password":"iggy"}`.
-- Node SSH: `maya@<ip>`, password `test123`. All nodes Ubuntu 22.04.
+- iggy-bench: `/home/fatihyuce/.cargo-target/release/iggy-bench`. NodePort `10.20.4.31:31921` (TCP). Not in Docker image (Alpine/musl + v8 fail).
+- Node SSH: `maya@<ip>`, password `test123`. All nodes Ubuntu 22.04, kernel 6.8.0-124.
+- kubeconfig: `~/.kube/yucemonitoring.config`, namespace `yucemonitoring`, `--insecure-skip-tls-verify`.
+
+## READY FOR HANDOVER (2026-06-20, session 5)
+
+**Current state:** OTLP->Iggy live in `yucemonitoring`. All infra tasks done. Working tree clean. `fork/master` and `ulak/master` up to date.
+
+**Next steps:** See TODO.md. Primarily: OTLP source PR to apache/iggy (standalone), and decide on COOP_TASKRUN upstream PR (see TOBEDECIDED.md). Completed work archived in DONE.md.
