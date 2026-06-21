@@ -35,6 +35,7 @@ const DEFAULT_RETRY_DELAY: &str = "200ms";
 const DEFAULT_MAX_RETRY_DELAY: &str = "5s";
 const DEFAULT_MAX_OPEN_RETRIES: u32 = 5;
 const DEFAULT_OPEN_RETRY_MAX_DELAY: &str = "30s";
+const DEFAULT_REQUEST_TIMEOUT: &str = "30s";
 
 #[derive(Debug)]
 pub struct QuickwitSink {
@@ -52,6 +53,7 @@ pub struct QuickwitSinkConfig {
     /// `index_id` is extracted from this YAML to build ingest URLs.
     pub index: String,
     pub verbose_logging: Option<bool>,
+    pub request_timeout: Option<String>,
     pub max_retries: Option<u32>,
     pub retry_delay: Option<String>,
     pub max_retry_delay: Option<String>,
@@ -132,6 +134,19 @@ impl QuickwitSink {
             Ok(())
         } else if status.is_client_error() {
             let reason = response.text().await.unwrap_or_default();
+            // 409 = another instance already created the index (concurrent open or retry
+            // after a 5xx that succeeded server-side). 400 with "already exists" covers
+            // older Quickwit versions that used BAD_REQUEST for this case.
+            if status == StatusCode::CONFLICT
+                || (status == StatusCode::BAD_REQUEST
+                    && reason.to_lowercase().contains("already exists"))
+            {
+                info!(
+                    "Quickwit index already exists: {} for connector ID: {} — treating as success",
+                    self.index_id, self.id
+                );
+                return Ok(());
+            }
             error!(
                 "Permanent error creating Quickwit index: {} for connector ID: {}. status: {status}, reason: {reason}",
                 self.index_id, self.id
@@ -226,7 +241,14 @@ impl Sink for QuickwitSink {
             DEFAULT_OPEN_RETRY_MAX_DELAY,
         );
 
-        let raw_client = reqwest::Client::new();
+        let request_timeout = parse_duration(
+            self.config.request_timeout.as_deref(),
+            DEFAULT_REQUEST_TIMEOUT,
+        );
+        let raw_client = reqwest::Client::builder()
+            .timeout(request_timeout)
+            .build()
+            .map_err(|e| Error::InitError(format!("Failed to build HTTP client: {e}")))?;
         let health_url = Url::parse(&format!("{}/health/livez", self.config.url))
             .map_err(|e| Error::InvalidConfigValue(format!("url: {e}")))?;
 
@@ -320,6 +342,7 @@ mod tests {
             url: "http://localhost:7280".to_string(),
             index: "index_id: test\nversion: 0.8\n".to_string(),
             verbose_logging: None,
+            request_timeout: None,
             max_retries: None,
             retry_delay: None,
             max_retry_delay: None,
@@ -360,5 +383,13 @@ mod tests {
     fn given_new_sink_index_id_should_be_empty() {
         let sink = QuickwitSink::new(1, test_config());
         assert!(sink.index_id.is_empty());
+    }
+
+    #[test]
+    fn given_custom_request_timeout_should_be_stored_in_config() {
+        let mut config = test_config();
+        config.request_timeout = Some("10s".to_string());
+        let sink = QuickwitSink::new(1, config);
+        assert_eq!(sink.config.request_timeout, Some("10s".to_string()));
     }
 }
