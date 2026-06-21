@@ -63,10 +63,10 @@ Conventional commits: `feat(connectors): ...`. Subject ≤ 72 chars. Body: why b
 - QW REST: port-forward `svc/maya-quickwit-s3 7280:7280`. QW version: **0.8.2** — only `unix_timestamp` (seconds) supported as datetime input_format; `unix_timestamp_nanos/millis` require 0.9.
 - iggy→QW sink: `iggy-{metrics,flows,logs,apigw}` indices (mode:dynamic, no retention). Consumer groups: `qw_sink_{metrics,flows,logs,apigw}`. If connector loops on `InvalidOffset`, delete the consumer group via HTTP API and restart.
 
-## READY FOR HANDOVER (2026-06-21, session 10)
+## READY FOR HANDOVER (2026-06-21, session 11)
 
-**Current state:** Four PRs open on `apache/iggy`, all `S-waiting-on-review`: #3516 (OTLP gRPC source), #3517 (COOP_TASKRUN decoupling), #3523 (quickwit_sink convention fix), #3525 (IggyConsumer InvalidOffset recovery). Full Iggy→QW pipeline live in `yucemonitoring`: 4 QW sink connectors active, iggy-metrics/flows ingesting ~3k docs/s. Collector cutover applied (direct collector→QW disabled). Working tree clean.
+**Current state:** Four PRs open on `apache/iggy`: #3516 (OTLP gRPC source, S-waiting-on-review), #3517 (COOP_TASKRUN, S-waiting-on-review), #3523 (quickwit_sink, S-waiting-on-review — review addressed: 409 absorb + request_timeout), #3525 (IggyConsumer InvalidOffset, S-waiting-on-review). Full Iggy→QW pipeline live in `yucemonitoring`: 4 QW sink connectors active. Collector cutover applied. Working tree clean.
 
-**Next steps:** Monitor PRs for reviewer feedback. Consider QW upgrade to 0.9 for nanosecond timestamp support and retention on iggy-{metrics,flows,logs,apigw} indices.
+**Next steps:** Monitor PRs for second reviewer. Consider QW upgrade to 0.9 for nanosecond timestamp support and retention on iggy-{metrics,flows,logs,apigw} indices.
 
 **Open decisions:** None.
