@@ -93,10 +93,10 @@ Conventional commits: `feat(connectors): ...`. Subject ≤ 72 chars. Body: why b
 - Node SSH: `maya@<ip>`, password `test123`. Ubuntu 22.04, kernel 6.8.0-124.
 - kubeconfig: `~/.kube/yucemonitoring.config`, ns `yucemonitoring`, `--insecure-skip-tls-verify`.
 
-## READY FOR HANDOVER (2026-06-20, session 7)
+## READY FOR HANDOVER (2026-06-21, session 8)
 
-**Current state:** OTLP source PR #3516 submitted to `apache/iggy`, awaiting review. OTLP→Iggy pipeline live in `yucemonitoring`. Working tree clean. All remotes (`fork`, `ulak`) synced. `origin/master` diverges by design (17 local commits ahead).
+**Current state:** Two PRs open on `apache/iggy`, both `S-waiting-on-review`: #3516 (OTLP gRPC source connector) and #3517 (COOP_TASKRUN/thread_pool decoupling). OTLP→Iggy pipeline live in `yucemonitoring`. Working tree clean.
 
-**Next steps:** Monitor PR #3516 for reviewer feedback and address comments. Decide COOP_TASKRUN upstream PR (see TOBEDECIDED.md). Track `server-ng` maturity for HA (see TODO.md).
+**Next steps:** Monitor PRs for reviewer feedback and address comments. Track `server-ng` maturity for HA (see TODO.md).
 
-**Open decisions:** COOP_TASKRUN upstream PR — upstream as standalone fix or keep only in maya fork. See TOBEDECIDED.md.
+**Open decisions:** None.
