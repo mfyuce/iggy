@@ -23,8 +23,10 @@ RUN --mount=type=cache,id=iggy-connectors-registry,sharing=locked,target=/usr/lo
     RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=mold" \
     cargo build --release --bin iggy-connectors \
  && cargo build --release -p iggy_connector_otlp_source \
+ && cargo build --release -p iggy_connector_quickwit_sink \
  && cp target/release/iggy-connectors /usr/local/bin/iggy-connectors \
  && cp target/release/libiggy_connector_otlp_source.so /usr/local/lib/libiggy_connector_otlp_source.so \
+ && cp target/release/libiggy_connector_quickwit_sink.so /usr/local/lib/libiggy_connector_quickwit_sink.so \
  && strip /usr/local/bin/iggy-connectors
 
 # ---- Runtime ----
@@ -40,6 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /usr/local/bin/iggy-connectors          /usr/local/bin/iggy-connectors
 COPY --from=build /usr/local/lib/libiggy_connector_otlp_source.so \
                                                            /connectors/plugins/libiggy_connector_otlp_source.so
+COPY --from=build /usr/local/lib/libiggy_connector_quickwit_sink.so \
+                                                           /connectors/plugins/libiggy_connector_quickwit_sink.so
 
 USER iggy
 WORKDIR /connectors
