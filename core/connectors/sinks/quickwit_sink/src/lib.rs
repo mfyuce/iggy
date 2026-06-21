@@ -189,7 +189,9 @@ impl QuickwitSink {
                 "Permanent error ingesting into Quickwit index: {} for connector ID: {}. status: {status}, reason: {text}",
                 self.index_id, self.id
             );
-            Err(Error::PermanentHttpError(format!("status: {status}, reason: {text}")))
+            Err(Error::PermanentHttpError(format!(
+                "status: {status}, reason: {text}"
+            )))
         } else {
             let text = response.text().await.unwrap_or_default();
             error!(
