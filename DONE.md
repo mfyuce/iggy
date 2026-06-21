@@ -18,3 +18,15 @@ Completed work, archived from CLAUDE.md handover blocks.
 - **Bench 1** (PinnedProducerAndConsumer, 8P+8C, 1 GiB, NodePort/LAN): 49 MB/s, p50=150 ms, p99=439 ms.
 - **Bench 2** (OTLP load, RATE=10): ~1100 msg/s, iggy CPU <1%, zero errors.
 - **iggy-bench added then reverted** from Docker image (charming/ssr → v8 → Alpine/musl build fails). Lives at `/home/fatihyuce/.cargo-target/release/iggy-bench`; run via NodePort `10.20.4.31:31921`.
+
+---
+
+## Sessions 5–10 (2026-06-21, iggy→QW sink pipeline + SDK fix)
+
+- **quickwit_sink connector** built and merged into iggy-connectors image (`5ce5f21b`). Convention-fixed in `fbe8de90`. PR #3523 upstream.
+- **4 QW sink connectors deployed** to `yucemonitoring`: consumer groups `qw_sink_{metrics,flows,logs,apigw}`. Configs in `anomaly/deploy/iggy-connectors.yaml`.
+- **QW indices pre-created** via REST API with `mode: dynamic` (no `timestamp_field`, no retention) because QW 0.8.2 only supports `unix_timestamp` (seconds) as datetime input_format; nanosecond support requires 0.9.
+- **Collector cutover applied** (`collector-iggy-only.yaml`): direct collector→QW exporters disabled; all OTLP traffic now flows collector→iggy-connectors→Iggy→QW sink. `maya-monitoring-config-management` distributes config to CPE devices.
+- **iggy-metrics + iggy-flows ingesting** ~3k docs/s confirmed post-cutover; 350k+ docs in indices.
+- **InvalidOffset bug discovered**: new/deleted consumer groups get offset=0; if topic retention has purged offset 0, `poll_messages` returns `IggyError::InvalidOffset` and the runtime loops forever. Workaround: delete consumer group via iggy HTTP API + restart pod.
+- **SDK fix committed** (`b22e1d6a`): `IggyConsumer` gains `fallback_to_first: Arc<AtomicBool>`; on `InvalidOffset` the flag is set + `warn!` emitted; next poll uses `PollingStrategy::first()`; flag cleared after first successful non-empty poll. PR #3525 upstream.
