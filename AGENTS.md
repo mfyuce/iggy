@@ -93,10 +93,12 @@ Conventional commits: `feat(connectors): ...`. Subject ≤ 72 chars. Body: why b
 - Node SSH: `maya@<ip>`, password `test123`. Ubuntu 22.04, kernel 6.8.0-124.
 - kubeconfig: `~/.kube/yucemonitoring.config`, ns `yucemonitoring`, `--insecure-skip-tls-verify`.
 
-## READY FOR HANDOVER (2026-06-21, session 8)
+## READY FOR HANDOVER (2026-06-21, session 9)
 
-**Current state:** Two PRs open on `apache/iggy`, both `S-waiting-on-review`: #3516 (OTLP gRPC source connector) and #3517 (COOP_TASKRUN/thread_pool decoupling). OTLP→Iggy pipeline live in `yucemonitoring`. Working tree clean.
+**Current state:** Three PRs open on `apache/iggy`, all `S-waiting-on-review`: #3516 (OTLP gRPC source), #3517 (COOP_TASKRUN decoupling), #3523 (quickwit_sink convention fix). Full Iggy→QW pipeline live in `yucemonitoring`: iggy-connectors pods 4 QW sink connectors active, iggy-metrics and iggy-flows indices ingesting 350k+ docs. Collector cutover applied (direct collector→QW disabled, iggy-only mode). Working tree clean.
 
-**Next steps:** Monitor PRs for reviewer feedback and address comments. Track `server-ng` maturity for HA (see TODO.md).
+**QW index note:** `iggy-{metrics,flows,logs,apigw}` indices pre-created with `mode: dynamic` (no timestamp_field) because QW 0.8.2 only supports `unix_timestamp` (seconds) as input_format — `unix_timestamp_nanos/millis` added in 0.9. No retention policy on these indices for now.
+
+**Next steps:** Monitor PRs for reviewer feedback. Verify collector→iggy data path still active after cutover. Consider QW upgrade to 0.9 for nanosecond timestamp support and retention on iggy-* indices.
 
 **Open decisions:** None.
