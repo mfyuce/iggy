@@ -30,3 +30,12 @@ Completed work, archived from CLAUDE.md handover blocks.
 - **iggy-metrics + iggy-flows ingesting** ~3k docs/s confirmed post-cutover; 350k+ docs in indices.
 - **InvalidOffset bug discovered**: new/deleted consumer groups get offset=0; if topic retention has purged offset 0, `poll_messages` returns `IggyError::InvalidOffset` and the runtime loops forever. Workaround: delete consumer group via iggy HTTP API + restart pod.
 - **SDK fix committed** (`b22e1d6a`): `IggyConsumer` gains `fallback_to_first: Arc<AtomicBool>`; on `InvalidOffset` the flag is set + `warn!` emitted; next poll uses `PollingStrategy::first()`; flag cleared after first successful non-empty poll. PR #3525 upstream.
+
+---
+
+## Session 11 (2026-06-21, quickwit_sink review fixes)
+
+- **#3523 review by ryerraguntla** — two issues addressed in `4aa51d4d`:
+  - `create_index()` now absorbs `409 CONFLICT` and `400 BAD_REQUEST + "already exists"` as `Ok(())` — fixes concurrent-open race and retry-after-succeeded-5xx.
+  - Added `request_timeout: Option<String>` (default 30s) to `QuickwitSinkConfig`; `reqwest::Client` built with `.timeout()` — fixes indefinite hang under network partition.
+- **Circuit breaker** — reviewer asked for judgment call; decided existing `HttpRetryMiddleware` + `PermanentHttpError` mapping is sufficient for an internal cluster service. No code change.
