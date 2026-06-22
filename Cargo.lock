@@ -6933,6 +6933,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "iggy_connector_otlp_sink"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "flate2",
+ "iggy_connector_sdk",
+ "opentelemetry-proto",
+ "prost",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "simd-json",
+ "tokio",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "iggy_connector_postgres_sink"
 version = "0.4.1-edge.1"
 dependencies = [
@@ -13062,6 +13081,7 @@ dependencies = [
  "axum",
  "base64",
  "bytes",
+ "flate2",
  "h2 0.4.14",
  "http 1.4.1",
  "http-body 1.0.1",
