@@ -39,3 +39,15 @@ Completed work, archived from CLAUDE.md handover blocks.
   - `create_index()` now absorbs `409 CONFLICT` and `400 BAD_REQUEST + "already exists"` as `Ok(())` — fixes concurrent-open race and retry-after-succeeded-5xx.
   - Added `request_timeout: Option<String>` (default 30s) to `QuickwitSinkConfig`; `reqwest::Client` built with `.timeout()` — fixes indefinite hang under network partition.
 - **Circuit breaker** — reviewer asked for judgment call; decided existing `HttpRetryMiddleware` + `PermanentHttpError` mapping is sufficient for an internal cluster service. No code change.
+
+---
+
+## Sessions 12–13 (2026-06-22, SDK iterations + otlp_sink + proto format)
+
+- **IggyConsumer SDK fix iterated** (3 additional commits on fix branch, merged to master):
+  - `abd030597`: per-partition tracking — replaced `Arc<AtomicBool>` with `Arc<DashMap<u32, ()>>` keyed by `partition_id`. InvalidOffset on partition A no longer forces first()-recovery on unrelated partitions.
+  - `e2bcc2be5` / `88b4838fb`: pre-arm fallback for new consumer groups — `initialize_consumer_group` returns `true` when group is freshly created; callers set fallback immediately so the very first poll uses first-available instead of Next, eliminating the guaranteed startup error.
+  - `e72898b38`: switched recovery from `first()` to `last()` — `PollingKind::First` returns `InvalidOffset(0)` over TCP even when offset 0 exists (HTTP works). TBD investigation; `last()` always succeeds.
+- **Segment cleaner discovery**: Iggy `cleaner_enabled = false` by default; expired segments accumulate without `IGGY_DATA_MAINTENANCE_MESSAGES_CLEANER_ENABLED=true`. Segment deletion also blocked by any consumer group with offset in the segment.
+- **`feat(connectors/otlp_sink)`** (`b535b80ed`, PR #3529): OTLP/gRPC sink connector — reads JSON or raw proto messages from Iggy and forwards to any OTLP backend (QW, Jaeger, Tempo) via gRPC. JSON mode reconstructs OTLP proto from otlp_source JSON output.
+- **`feat(connectors/otlp_source): add proto storage format`** (`5ba2be566`): `format = "proto"` mode prost-encodes entire Export*ServiceRequest as single raw message. 4-5x storage reduction vs JSON. Paired with otlp_sink proto mode.

@@ -52,12 +52,14 @@ Hooks: `pre-commit install` or `prek install`. Commits: `feat(connectors): ...`,
 - Node SSH: `maya@<ip>`, password `test123`. kernel 6.8.0-124. kubeconfig: `~/.kube/yucemonitoring.config`, ns `yucemonitoring`, `--insecure-skip-tls-verify`.
 - Jenkins: `maya-anomaly-platform`, `type=iggy`. Trivy CVE scan always fails (false positive) — check `BUILT_IMAGE=` in console log; if present, deploy anyway.
 - QW REST: port-forward `svc/maya-quickwit-s3 7280:7280`. QW **0.8.2** — only `unix_timestamp` (seconds) as datetime input_format; nanos/millis require 0.9.
-- iggy→QW sink: `iggy-{metrics,flows,logs,apigw}` indices (mode:dynamic, no retention). Consumer groups: `qw_sink_{metrics,flows,logs,apigw}`. If connector loops on `InvalidOffset`, delete the consumer group via iggy HTTP API and restart.
+- iggy→QW sink: `iggy-{metrics,flows,logs,apigw}` indices (mode:dynamic, no retention). Consumer groups: `qw_sink_{metrics,flows,logs,apigw}`. If connector loops on `InvalidOffset`, delete the CG via iggy HTTP API and restart.
+- Segment cleaner: `IGGY_DATA_MAINTENANCE_MESSAGES_CLEANER_ENABLED=true` required — disabled by default; without it expired segments accumulate. Lagging CGs also block deletion.
+- Connectors in image: `otlp_source` (JSON/proto modes), `otlp_sink` (PR #3529), `quickwit_sink`.
 
-## READY FOR HANDOVER (2026-06-21, session 11)
+## READY FOR HANDOVER (2026-06-22, session 12)
 
-**Current state:** Four PRs open on `apache/iggy`: #3516 (OTLP gRPC source, S-waiting-on-review), #3517 (COOP_TASKRUN, S-waiting-on-review), #3523 (quickwit_sink, S-waiting-on-review — review addressed: 409 absorb + request_timeout), #3525 (IggyConsumer InvalidOffset, S-waiting-on-review). Full Iggy→QW pipeline live in `yucemonitoring`: 4 QW sink connectors active. Collector cutover applied. Working tree clean.
+**Current state:** Five PRs open on `apache/iggy` (all S-waiting-on-review): #3516 (OTLP source — valid reviewer comments to fix: try_send→RESOURCE_EXHAUSTED + partial_success), #3517 (COOP_TASKRUN), #3523 (quickwit_sink — review done), #3525 (InvalidOffset SDK — needs reply to atharvalade: per-partition fixed, PR is SDK-only after rebase), #3529 (otlp_sink). Full Iggy→QW pipeline live. Working tree clean.
 
-**Next steps:** Monitor PRs for second reviewer. Consider QW upgrade to 0.9 for nanosecond timestamp support and retention on iggy-{metrics,flows,logs,apigw} indices.
+**Next steps:** (1) Reply to atharvalade on #3525 explaining per-partition fix and rebase; (2) Fix try_send + partial_success in #3516; (3) Enable segment cleaner in production (`IGGY_DATA_MAINTENANCE_MESSAGES_CLEANER_ENABLED=true`); (4) Investigate first() TCP bug; (5) Address proto decode spam on old JSON messages.
 
-**Open decisions:** None.
+**Open decisions:** See TOBEDECIDED.md — TCP first() bug + otlp_source backpressure.
