@@ -51,6 +51,7 @@ opentelemetry-proto = { version = "0.32.0", default-features = false, features =
     "metrics",
     "trace",
 ] }
+prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
