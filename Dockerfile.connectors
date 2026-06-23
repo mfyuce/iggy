@@ -18,7 +18,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # iggy-connectors runtime image — ships the iggy-connectors binary and the
-# OTLP/gRPC sink, quickwit sink plugins (.so). Config files are injected
+# OTLP/gRPC source, OTLP/gRPC sink, quickwit sink plugins (.so). Config files are injected
 # via K8s ConfigMaps.
 #
 # Builder: rust:1-slim-bookworm (mold linker, BuildKit cache mounts)
@@ -40,9 +40,11 @@ RUN --mount=type=cache,id=iggy-connectors-registry,sharing=locked,target=/usr/lo
     --mount=type=cache,id=iggy-connectors-target-${TARGETARCH},target=/app/target \
     RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=mold" \
     cargo build --release --bin iggy-connectors \
+ && cargo build --release -p iggy_connector_otlp_source \
  && cargo build --release -p iggy_connector_quickwit_sink \
  && cargo build --release -p iggy_connector_otlp_sink \
  && cp target/release/iggy-connectors /usr/local/bin/iggy-connectors \
+ && cp target/release/libiggy_connector_otlp_source.so /usr/local/lib/libiggy_connector_otlp_source.so \
  && cp target/release/libiggy_connector_quickwit_sink.so /usr/local/lib/libiggy_connector_quickwit_sink.so \
  && cp target/release/libiggy_connector_otlp_sink.so /usr/local/lib/libiggy_connector_otlp_sink.so \
  && strip /usr/local/bin/iggy-connectors
@@ -58,6 +60,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chown -R iggy:iggy /connectors
 
 COPY --from=build /usr/local/bin/iggy-connectors          /usr/local/bin/iggy-connectors
+COPY --from=build /usr/local/lib/libiggy_connector_otlp_source.so \
+                                                           /connectors/plugins/libiggy_connector_otlp_source.so
 COPY --from=build /usr/local/lib/libiggy_connector_quickwit_sink.so \
                                                            /connectors/plugins/libiggy_connector_quickwit_sink.so
 COPY --from=build /usr/local/lib/libiggy_connector_otlp_sink.so \
