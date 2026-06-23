@@ -54,7 +54,6 @@ fields = ["email", "created_at"]
 [plugin_config]
 url = "http://localhost:7280"
 verbose_logging = false
-# request_timeout = "30s"
 # max_retries = 3
 # retry_delay = "200ms"
 # max_retry_delay = "5s"
