@@ -19,26 +19,26 @@ use crate::StorageFormat;
 use crate::convert;
 use iggy_connector_sdk::ProducedMessage;
 use opentelemetry_proto::tonic::collector::logs::v1::{
-    ExportLogsServiceRequest, ExportLogsServiceResponse,
+    ExportLogsPartialSuccess, ExportLogsServiceRequest, ExportLogsServiceResponse,
     logs_service_server::{LogsService, LogsServiceServer},
 };
 use opentelemetry_proto::tonic::collector::metrics::v1::{
-    ExportMetricsServiceRequest, ExportMetricsServiceResponse,
+    ExportMetricsPartialSuccess, ExportMetricsServiceRequest, ExportMetricsServiceResponse,
     metrics_service_server::{MetricsService, MetricsServiceServer},
 };
 use opentelemetry_proto::tonic::collector::trace::v1::{
-    ExportTraceServiceRequest, ExportTraceServiceResponse,
+    ExportTracePartialSuccess, ExportTraceServiceRequest, ExportTraceServiceResponse,
     trace_service_server::{TraceService, TraceServiceServer},
 };
 use prost::Message as ProstMessage;
-use std::net::SocketAddr;
 use tokio::sync::{mpsc, oneshot};
 use tonic::codec::CompressionEncoding;
+use tonic::transport::server::TcpIncoming;
 use tonic::{Request, Response, Status};
 use tracing::{error, info, warn};
 
 pub async fn run_grpc_server(
-    addr: SocketAddr,
+    incoming: TcpIncoming,
     tx: mpsc::Sender<ProducedMessage>,
     shutdown: oneshot::Receiver<()>,
     format: StorageFormat,
@@ -52,8 +52,6 @@ pub async fn run_grpc_server(
         format,
     };
     let trace_svc = TraceServiceImpl { tx, format };
-
-    info!("OTLP gRPC server starting on {addr}");
 
     // OTel SDKs and the Collector's OTLP exporter gzip-compress payloads by
     // default, so every service must accept gzip on the wire. Responses are tiny
@@ -73,7 +71,7 @@ pub async fn run_grpc_server(
         .add_service(logs_server)
         .add_service(metrics_server)
         .add_service(trace_server)
-        .serve_with_shutdown(addr, async {
+        .serve_with_incoming_shutdown(incoming, async {
             let _ = shutdown.await;
             info!("OTLP gRPC server received shutdown signal");
         })
@@ -105,10 +103,12 @@ impl LogsService for LogsServiceImpl {
         request: Request<ExportLogsServiceRequest>,
     ) -> Result<Response<ExportLogsServiceResponse>, Status> {
         let messages = encode_or_convert(request.into_inner(), self.format, "logs");
-        send_messages(&self.tx, messages, "logs").await;
-        Ok(Response::new(ExportLogsServiceResponse {
-            partial_success: None,
-        }))
+        let rejected = send_messages(&self.tx, messages, "logs");
+        let partial_success = (rejected > 0).then(|| ExportLogsPartialSuccess {
+            rejected_log_records: rejected,
+            error_message: "channel full; records dropped".to_string(),
+        });
+        Ok(Response::new(ExportLogsServiceResponse { partial_success }))
     }
 }
 
@@ -119,9 +119,13 @@ impl MetricsService for MetricsServiceImpl {
         request: Request<ExportMetricsServiceRequest>,
     ) -> Result<Response<ExportMetricsServiceResponse>, Status> {
         let messages = encode_or_convert(request.into_inner(), self.format, "metrics");
-        send_messages(&self.tx, messages, "metrics").await;
+        let rejected = send_messages(&self.tx, messages, "metrics");
+        let partial_success = (rejected > 0).then(|| ExportMetricsPartialSuccess {
+            rejected_data_points: rejected,
+            error_message: "channel full; data points dropped".to_string(),
+        });
         Ok(Response::new(ExportMetricsServiceResponse {
-            partial_success: None,
+            partial_success,
         }))
     }
 }
@@ -133,9 +137,13 @@ impl TraceService for TraceServiceImpl {
         request: Request<ExportTraceServiceRequest>,
     ) -> Result<Response<ExportTraceServiceResponse>, Status> {
         let messages = encode_or_convert(request.into_inner(), self.format, "traces");
-        send_messages(&self.tx, messages, "traces").await;
+        let rejected = send_messages(&self.tx, messages, "traces");
+        let partial_success = (rejected > 0).then(|| ExportTracePartialSuccess {
+            rejected_spans: rejected,
+            error_message: "channel full; spans dropped".to_string(),
+        });
         Ok(Response::new(ExportTraceServiceResponse {
-            partial_success: None,
+            partial_success,
         }))
     }
 }
@@ -186,14 +194,20 @@ where
     }
 }
 
-async fn send_messages(
+fn send_messages(
     tx: &mpsc::Sender<ProducedMessage>,
     messages: Vec<ProducedMessage>,
     signal: &str,
-) {
+) -> i64 {
+    let total = messages.len() as i64;
+    let mut dropped: i64 = 0;
     for message in messages {
-        if let Err(err) = tx.try_send(message) {
-            warn!("OTLP channel full, dropping {signal} message: {err}");
+        if tx.try_send(message).is_err() {
+            dropped += 1;
         }
     }
+    if dropped > 0 {
+        warn!("OTLP channel full, dropped {dropped}/{total} {signal} messages");
+    }
+    dropped
 }

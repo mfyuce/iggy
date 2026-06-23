@@ -2569,9 +2569,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.64"
+version = "1.2.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad887fd958be91b5098c0248def011f4523ab786cd411be668777e55063501f"
+checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -6125,9 +6125,9 @@ dependencies = [
 
 [[package]]
 name = "hwlocality-sys"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10a83c43a772c1f774b806deb44891c2a9578eb33cec48aad513482e0da3d4d4"
+checksum = "507b4c70a812b6ed5907db7d59726118f4e17708fbc09e32a872ac8e3b5bafaf"
 dependencies = [
  "autotools",
  "cmake",
@@ -6931,25 +6931,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "iggy_connector_otlp_sink"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "iggy_connector_sdk",
- "opentelemetry-proto",
- "prost",
- "serde",
- "serde_json",
- "simd-json",
- "tokio",
- "tonic",
- "tracing",
-]
-
-[[package]]
 name = "iggy_connector_otlp_source"
-version = "0.1.0"
+version = "0.4.1-edge.1"
 dependencies = [
  "async-trait",
  "dashmap",
@@ -7012,9 +6995,10 @@ name = "iggy_connector_quickwit_sink"
 version = "0.4.1-edge.1"
 dependencies = [
  "async-trait",
+ "dashmap",
  "iggy_connector_sdk",
+ "once_cell",
  "reqwest 0.13.4",
- "reqwest-middleware",
  "serde",
  "serde_yaml_ng",
  "simd-json",
@@ -11738,12 +11722,13 @@ dependencies = [
 
 [[package]]
 name = "sha3"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
+checksum = "bc9bad02c26382724b2d2692c6f179285e4b54eeecd7968f52a50059c3c11759"
 dependencies = [
  "digest 0.11.3",
  "keccak",
+ "sponge-cursor",
 ]
 
 [[package]]
@@ -12039,6 +12024,12 @@ dependencies = [
  "base64ct",
  "der",
 ]
+
+[[package]]
+name = "sponge-cursor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "sqlparser"

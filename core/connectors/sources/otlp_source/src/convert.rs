@@ -23,6 +23,7 @@ use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 use opentelemetry_proto::tonic::metrics::v1::{Metric, metric, number_data_point};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use serde_json::{Map, Value, json};
+use std::fmt::Write as _;
 use tracing::warn;
 
 pub fn export_logs_to_messages(req: ExportLogsServiceRequest) -> Vec<ProducedMessage> {
@@ -35,6 +36,7 @@ pub fn export_logs_to_messages(req: ExportLogsServiceRequest) -> Vec<ProducedMes
             .unwrap_or("")
             .to_owned();
 
+        let resource_value = Value::Object(resource_attrs);
         for scope_logs in resource_logs.scope_logs {
             for record in scope_logs.log_records {
                 let body = record.body.as_ref().map(any_value_to_json);
@@ -48,7 +50,7 @@ pub fn export_logs_to_messages(req: ExportLogsServiceRequest) -> Vec<ProducedMes
                     "trace_id": bytes_to_hex(&record.trace_id),
                     "span_id": bytes_to_hex(&record.span_id),
                     "service_name": service_name,
-                    "resource": resource_attrs.clone(),
+                    "resource": resource_value.clone(),
                     "attributes": extract_attrs(&record.attributes),
                 });
                 if let Some(obj) = doc.as_object_mut() {
@@ -58,7 +60,7 @@ pub fn export_logs_to_messages(req: ExportLogsServiceRequest) -> Vec<ProducedMes
                     Ok(payload) => messages.push(ProducedMessage {
                         id: None,
                         checksum: None,
-                        timestamp: Some(record.time_unix_nano),
+                        timestamp: (record.time_unix_nano != 0).then_some(record.time_unix_nano),
                         origin_timestamp: None,
                         headers: None,
                         payload,
@@ -101,6 +103,7 @@ pub fn export_traces_to_messages(req: ExportTraceServiceRequest) -> Vec<Produced
             .unwrap_or("")
             .to_owned();
 
+        let resource_value = Value::Object(resource_attrs);
         for scope_spans in resource_spans.scope_spans {
             for span in scope_spans.spans {
                 let status_code = span
@@ -126,7 +129,7 @@ pub fn export_traces_to_messages(req: ExportTraceServiceRequest) -> Vec<Produced
                     "status": status_code,
                     "status_message": status_message,
                     "service_name": service_name,
-                    "resource": resource_attrs.clone(),
+                    "resource": resource_value.clone(),
                     "attributes": extract_attrs(&span.attributes),
                 });
                 if let Some(obj) = doc.as_object_mut() {
@@ -136,7 +139,8 @@ pub fn export_traces_to_messages(req: ExportTraceServiceRequest) -> Vec<Produced
                     Ok(payload) => messages.push(ProducedMessage {
                         id: None,
                         checksum: None,
-                        timestamp: Some(span.start_time_unix_nano),
+                        timestamp: (span.start_time_unix_nano != 0)
+                            .then_some(span.start_time_unix_nano),
                         origin_timestamp: None,
                         headers: None,
                         payload,
@@ -259,11 +263,14 @@ pub fn extract_attrs(attrs: &[KeyValue]) -> Map<String, Value> {
     attrs
         .iter()
         .map(|kv| {
-            let value = kv
-                .value
-                .as_ref()
-                .map(any_value_to_json)
-                .unwrap_or(Value::Null);
+            let value = match kv.value.as_ref() {
+                Some(av) if matches!(av.value, Some(any_value::Value::StringValueStrindex(_))) => {
+                    warn!(key = %kv.key, "dropping attribute with unrecognized AnyValue variant");
+                    Value::Null
+                }
+                Some(av) => any_value_to_json(av),
+                None => Value::Null,
+            };
             (kv.key.clone(), value)
         })
         .collect()
@@ -285,10 +292,11 @@ pub fn any_value_to_json(value: &AnyValue) -> Value {
 }
 
 pub fn bytes_to_hex(bytes: &[u8]) -> String {
-    if bytes.is_empty() {
-        return String::new();
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
     }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    s
 }
 
 fn severity_number_to_text(number: i32) -> &'static str {

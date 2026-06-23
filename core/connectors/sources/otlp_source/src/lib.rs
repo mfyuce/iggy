@@ -22,10 +22,11 @@ use iggy_connector_sdk::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tonic::transport::server::TcpIncoming;
 use tracing::info;
 
-pub mod convert;
-pub mod server;
+pub(crate) mod convert;
+pub(crate) mod server;
 
 source_connector!(OtlpSource);
 
@@ -88,17 +89,32 @@ impl OtlpSource {
 #[async_trait]
 impl Source for OtlpSource {
     async fn open(&mut self) -> Result<(), Error> {
+        if self.rx.lock().await.is_some() {
+            return Err(Error::InitError(
+                "OTLP source connector is already open".to_string(),
+            ));
+        }
+
         let addr = self
             .config
             .listen_addr
             .parse()
             .map_err(|err| Error::InitError(format!("Invalid listen address: {err}")))?;
 
+        let incoming = TcpIncoming::bind(addr).map_err(|err| {
+            Error::InitError(format!("Failed to bind {}: {err}", self.config.listen_addr))
+        })?;
+
+        info!(
+            "OTLP source connector with ID: {} listening on {}",
+            self.id, self.config.listen_addr
+        );
+
         let (tx, rx) = mpsc::channel(self.config.channel_capacity);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let handle = tokio::spawn(server::run_grpc_server(
-            addr,
+            incoming,
             tx,
             shutdown_rx,
             self.config.format,
@@ -108,10 +124,6 @@ impl Source for OtlpSource {
         *self.shutdown_tx.lock().await = Some(shutdown_tx);
         *self.server_task.lock().await = Some(handle);
 
-        info!(
-            "OTLP source connector with ID: {} listening on {}",
-            self.id, self.config.listen_addr
-        );
         Ok(())
     }
 
@@ -124,11 +136,9 @@ impl Source for OtlpSource {
         let first = match rx.recv().await {
             Some(msg) => msg,
             None => {
-                return Ok(ProducedMessages {
-                    schema: Schema::Json,
-                    messages: vec![],
-                    state: None,
-                });
+                return Err(Error::Connection(
+                    "OTLP gRPC server terminated unexpectedly".to_string(),
+                ));
             }
         };
 
@@ -158,9 +168,12 @@ impl Source for OtlpSource {
         if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(());
         }
-        if let Some(task) = self.server_task.lock().await.take() {
+        let task = self.server_task.lock().await.take();
+        if let Some(task) = task {
             task.abort();
+            let _ = task.await;
         }
+        *self.rx.lock().await = None;
         info!("OTLP source connector with ID: {} closed.", self.id);
         Ok(())
     }
