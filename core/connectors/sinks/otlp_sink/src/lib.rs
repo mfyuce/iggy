@@ -39,8 +39,8 @@ use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tonic::client::Grpc as TonicGrpc;
-use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::codec::CompressionEncoding;
+use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::metadata::{MetadataKey, MetadataValue};
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
@@ -335,7 +335,8 @@ impl OtlpSink {
     ) -> Result<u64, Error> {
         match client {
             GrpcClient::Traces(c) => {
-                let req = build_trace_request(&self.config.format, messages_metadata, messages)?;
+                let req =
+                    build_trace_request(self.id, &self.config.format, messages_metadata, messages)?;
                 if req.resource_spans.is_empty() {
                     return Ok(0);
                 }
@@ -371,7 +372,8 @@ impl OtlpSink {
                 Ok(total as u64)
             }
             GrpcClient::Logs(c) => {
-                let req = build_logs_request(&self.config.format, messages_metadata, messages)?;
+                let req =
+                    build_logs_request(self.id, &self.config.format, messages_metadata, messages)?;
                 if req.resource_logs.is_empty() {
                     return Ok(0);
                 }
@@ -397,7 +399,8 @@ impl OtlpSink {
     ) -> Result<u64, Error> {
         let (url_path, proto_bytes) = match &self.config.signal {
             OtlpSignal::Traces => {
-                let req = build_trace_request(&self.config.format, messages_metadata, messages)?;
+                let req =
+                    build_trace_request(self.id, &self.config.format, messages_metadata, messages)?;
                 if req.resource_spans.is_empty() {
                     return Ok(0);
                 }
@@ -417,7 +420,8 @@ impl OtlpSink {
                 ("/v1/metrics", buf)
             }
             OtlpSignal::Logs => {
-                let req = build_logs_request(&self.config.format, messages_metadata, messages)?;
+                let req =
+                    build_logs_request(self.id, &self.config.format, messages_metadata, messages)?;
                 if req.resource_logs.is_empty() {
                     return Ok(0);
                 }
@@ -517,9 +521,10 @@ impl OtlpSink {
                 }
             };
             // tower::Buffer requires poll_ready before every call.
-            grpc_client.ready().await.map_err(|e| {
-                Error::CannotStoreData(format!("OTLP gRPC channel not ready: {e}"))
-            })?;
+            grpc_client
+                .ready()
+                .await
+                .map_err(|e| Error::CannotStoreData(format!("OTLP gRPC channel not ready: {e}")))?;
             let mut request = tonic::Request::new(Bytes::copy_from_slice(raw));
             for (k, v) in &self.metadata {
                 request.metadata_mut().insert(k.clone(), v.clone());
@@ -616,12 +621,70 @@ impl OtlpSink {
     }
 }
 
+fn sanitize_trace_request(connector_id: u32, req: &mut ExportTraceServiceRequest) {
+    for resource_span in &mut req.resource_spans {
+        for scope_span in &mut resource_span.scope_spans {
+            scope_span.spans.retain_mut(|span| {
+                if span.trace_id.len() != 16 {
+                    warn!(
+                        "OTLP sink connector ID: {connector_id} dropping trace span '{}' because trace_id has invalid length: expected 16 bytes, got {} bytes",
+                        span.name,
+                        span.trace_id.len()
+                    );
+                    return false;
+                }
+                if span.span_id.len() != 8 {
+                    warn!(
+                        "OTLP sink connector ID: {connector_id} dropping trace span '{}' because span_id has invalid length: expected 8 bytes, got {} bytes",
+                        span.name,
+                        span.span_id.len()
+                    );
+                    return false;
+                }
+                if !span.parent_span_id.is_empty() && span.parent_span_id.len() != 8 {
+                    warn!(
+                        "OTLP sink connector ID: {connector_id} clearing parent_span_id for trace span '{}' because it has invalid length: expected 8 bytes, got {} bytes",
+                        span.name,
+                        span.parent_span_id.len()
+                    );
+                    span.parent_span_id.clear();
+                }
+                true
+            });
+        }
+    }
+}
+
+fn sanitize_logs_request(connector_id: u32, req: &mut ExportLogsServiceRequest) {
+    for resource_log in &mut req.resource_logs {
+        for scope_log in &mut resource_log.scope_logs {
+            for log in &mut scope_log.log_records {
+                if !log.trace_id.is_empty() && log.trace_id.len() != 16 {
+                    warn!(
+                        "OTLP sink connector ID: {connector_id} clearing trace_id in log record because it has invalid length: expected 16 bytes, got {} bytes",
+                        log.trace_id.len()
+                    );
+                    log.trace_id.clear();
+                }
+                if !log.span_id.is_empty() && log.span_id.len() != 8 {
+                    warn!(
+                        "OTLP sink connector ID: {connector_id} clearing span_id in log record because it has invalid length: expected 8 bytes, got {} bytes",
+                        log.span_id.len()
+                    );
+                    log.span_id.clear();
+                }
+            }
+        }
+    }
+}
+
 fn build_trace_request(
+    connector_id: u32,
     format: &StorageFormat,
     meta: &MessagesMetadata,
     messages: &[ConsumedMessage],
 ) -> Result<ExportTraceServiceRequest, Error> {
-    match format {
+    let mut req = match format {
         StorageFormat::Proto => {
             let bytes = collect_raw_bytes(meta, messages);
             if bytes.is_empty() {
@@ -634,13 +697,15 @@ fn build_trace_request(
                     Err(e) => warn!("Failed to decode OTLP trace proto: {e}"),
                 }
             }
-            Ok(merged)
+            merged
         }
         StorageFormat::Json => {
             let jsons = collect_json_values(meta, messages);
-            Ok(from_json::traces_from_json(&jsons))
+            from_json::traces_from_json(&jsons)
         }
-    }
+    };
+    sanitize_trace_request(connector_id, &mut req);
+    Ok(req)
 }
 
 fn build_metrics_request(
@@ -668,11 +733,12 @@ fn build_metrics_request(
 }
 
 fn build_logs_request(
+    connector_id: u32,
     format: &StorageFormat,
     meta: &MessagesMetadata,
     messages: &[ConsumedMessage],
 ) -> Result<ExportLogsServiceRequest, Error> {
-    match format {
+    let mut req = match format {
         StorageFormat::Proto => {
             let bytes = collect_raw_bytes(meta, messages);
             let mut merged = ExportLogsServiceRequest::default();
@@ -682,13 +748,15 @@ fn build_logs_request(
                     Err(e) => warn!("Failed to decode OTLP logs proto: {e}"),
                 }
             }
-            Ok(merged)
+            merged
         }
         StorageFormat::Json => {
             let jsons = collect_json_values(meta, messages);
-            Ok(from_json::logs_from_json(&jsons))
+            from_json::logs_from_json(&jsons)
         }
-    }
+    };
+    sanitize_logs_request(connector_id, &mut req);
+    Ok(req)
 }
 
 fn collect_raw_bytes<'a>(
@@ -808,5 +876,102 @@ mod tests {
         assert_eq!(sink.counters.messages_sent.load(Ordering::Relaxed), 0);
         assert_eq!(sink.counters.batches_sent.load(Ordering::Relaxed), 0);
         assert_eq!(sink.counters.batches_failed.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_sanitize_trace_request() {
+        use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span};
+        let mut req = ExportTraceServiceRequest {
+            resource_spans: vec![ResourceSpans {
+                resource: None,
+                scope_spans: vec![ScopeSpans {
+                    scope: None,
+                    spans: vec![
+                        Span {
+                            name: "valid-span".to_string(),
+                            trace_id: vec![0; 16],
+                            span_id: vec![0; 8],
+                            parent_span_id: vec![0; 8],
+                            ..Default::default()
+                        },
+                        Span {
+                            name: "invalid-trace-id".to_string(),
+                            trace_id: vec![0; 15], // invalid
+                            span_id: vec![0; 8],
+                            parent_span_id: vec![],
+                            ..Default::default()
+                        },
+                        Span {
+                            name: "invalid-span-id".to_string(),
+                            trace_id: vec![0; 16],
+                            span_id: vec![0; 7], // invalid
+                            parent_span_id: vec![],
+                            ..Default::default()
+                        },
+                        Span {
+                            name: "invalid-parent-span-id".to_string(),
+                            trace_id: vec![0; 16],
+                            span_id: vec![0; 8],
+                            parent_span_id: vec![0; 5], // invalid
+                            ..Default::default()
+                        },
+                    ],
+                    schema_url: String::new(),
+                }],
+                schema_url: String::new(),
+            }],
+        };
+
+        sanitize_trace_request(1, &mut req);
+
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].name, "valid-span");
+        assert_eq!(spans[0].parent_span_id.len(), 8);
+        assert_eq!(spans[1].name, "invalid-parent-span-id");
+        assert_eq!(spans[1].parent_span_id.len(), 0); // parent_span_id cleared
+    }
+
+    #[test]
+    fn test_sanitize_logs_request() {
+        use opentelemetry_proto::tonic::logs::v1::{LogRecord, ResourceLogs, ScopeLogs};
+        let mut req = ExportLogsServiceRequest {
+            resource_logs: vec![ResourceLogs {
+                resource: None,
+                scope_logs: vec![ScopeLogs {
+                    scope: None,
+                    log_records: vec![
+                        LogRecord {
+                            trace_id: vec![0; 16],
+                            span_id: vec![0; 8],
+                            ..Default::default()
+                        },
+                        LogRecord {
+                            trace_id: vec![0; 15], // invalid
+                            span_id: vec![0; 8],
+                            ..Default::default()
+                        },
+                        LogRecord {
+                            trace_id: vec![0; 16],
+                            span_id: vec![0; 7], // invalid
+                            ..Default::default()
+                        },
+                    ],
+                    schema_url: String::new(),
+                }],
+                schema_url: String::new(),
+            }],
+        };
+
+        sanitize_logs_request(1, &mut req);
+
+        let logs = &req.resource_logs[0].scope_logs[0].log_records;
+        assert_eq!(logs.len(), 3);
+        assert_eq!(logs[0].trace_id.len(), 16);
+        assert_eq!(logs[0].span_id.len(), 8);
+        assert_eq!(logs[1].trace_id.len(), 0); // cleared
+        assert_eq!(logs[1].span_id.len(), 8);
+        assert_eq!(logs[2].trace_id.len(), 16);
+        assert_eq!(logs[2].span_id.len(), 0); // cleared
     }
 }

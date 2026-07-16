@@ -9,6 +9,8 @@
 - [ ] **#3525** `S-waiting-on-review` — IggyConsumer InvalidOffset recovery
   - `atharvalade` CHANGES_REQUESTED: per-partition concern addressed (DashMap); "5 features in one PR" addressed (rebased to SDK-only). **Reply on PR explaining this, request re-review.**
 - [ ] **#3529** `S-waiting-on-review` — OTLP/gRPC sink connector
+  - [ ] **Follow-up: Trace/Span ID validation fix** — After local verification on `yucemonitoring`, prepare a PR/patch to upstream to include the `sanitize_trace_request` and `sanitize_logs_request` changes (filtering out invalid trace/span ID sizes to avoid gRPC InvalidArgument blockages).
+
 
 ## Infrastructure
 
