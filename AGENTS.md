@@ -235,10 +235,20 @@ Created by server, connectors runtime, or tests. Gitignored. Safe to delete to r
 - Segment cleaner: `IGGY_DATA_MAINTENANCE_MESSAGES_CLEANER_ENABLED=true` -- already enabled in production.
 - Connectors in image: `otlp_source` (JSON/proto modes), `otlp_sink` (PR #3529), `quickwit_sink`.
 
-## READY FOR HANDOVER (2026-06-22, session 15)
+## READY FOR HANDOVER (2026-07-17, session 16)
 
-**Current state:** Five PRs open on `apache/iggy` (all S-waiting-on-review): #3516 (OTLP source -- awaiting re-review from ryerraguntla), #3517 (COOP_TASKRUN), #3523 (quickwit_sink), #3525 (InvalidOffset SDK -- 3 inline threads answered, awaiting atharvalade re-review), #3529 (otlp_sink -- 22 inline threads answered, 9ba479047 committed, /ready posted). Working tree clean.
+**Current state:** 
+- OTLP sink trace/span ID sanitization local fix implemented and unit tested (14/14 tests pass successfully).
+- Jenkins build #178 completed successfully with image: `192.168.57.202:35000/iggy-connectors:20260716-155359-bab46328d556`.
+- Kubernetes deployment to `yucemonitoring` is currently blocked by an expired Rancher API token in `~/.kube/yucemonitoring.config` (returns `403 Forbidden` from Cattle API).
 
-**Next steps:** (1) Wait for reviews on all 5 PRs; (2) Investigate `PollingKind::First` TCP bug deeper (see TOBEDECIDED.md -- root cause narrowed to `validate_checksums_and_offsets` or segment offset mismatch; reproduce deterministically).
-
-**Open decisions:** See TOBEDECIDED.md -- TCP first() bug (investigation findings recorded, not yet root-caused).
+**Next steps:**
+1. Refresh the Rancher Token from the Rancher UI, add it to `.env` as `RANCHER_TOKEN` in `monitoring/ai/anomaly`, and run `bash scripts/refresh_kubeconfigs.sh tenant`.
+2. Apply the deployment manifests and rollout the new image:
+   ```bash
+   kubectl --kubeconfig ~/.kube/yucemonitoring.config --insecure-skip-tls-verify -n yucemonitoring apply -f /home/fatihyuce/work/projects/maya3/ng_sdn/monitoring/ai/anomaly/deploy/iggy-connectors.yaml
+   kubectl --kubeconfig ~/.kube/yucemonitoring.config --insecure-skip-tls-verify -n yucemonitoring set image deployment/iggy-connectors iggy-connectors="maya-nexus:35000/iggy-connectors:20260716-155359-bab46328d556"
+   kubectl --kubeconfig ~/.kube/yucemonitoring.config --insecure-skip-tls-verify -n yucemonitoring rollout status deployment/iggy-connectors --timeout=120s
+   ```
+3. Test that the OTLP sink successfully filters out malformed span/trace IDs (logs warning) and continues processing/sending other spans without blocking Quickwit.
+4. Prepare and upstream the sanitization changes to PR #3529 once local testing on `yucemonitoring` is verified.
