@@ -22,9 +22,80 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 use opentelemetry_proto::tonic::metrics::v1::{Metric, metric, number_data_point};
 use opentelemetry_proto::tonic::resource::v1::Resource;
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::fmt::Write as _;
 use tracing::warn;
+
+fn is_zero_u64(val: &u64) -> bool {
+    *val == 0
+}
+
+#[derive(Serialize)]
+struct LogRecordDoc<'a> {
+    signal: &'static str,
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    timestamp_ns: u64,
+    #[serde(skip_serializing_if = "is_zero_u64")]
+    observed_timestamp_ns: u64,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    severity: &'static str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    severity_text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<Value>,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    trace_id: String,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    span_id: String,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    service_name: &'a str,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    resource: &'a Map<String, Value>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    attributes: Map<String, Value>,
+}
+
+#[derive(Serialize)]
+struct SpanDoc<'a> {
+    signal: &'static str,
+    trace_id: String,
+    span_id: String,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    parent_span_id: String,
+    name: &'a str,
+    kind: &'static str,
+    start_time_ns: u64,
+    end_time_ns: u64,
+    status: &'static str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    status_message: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    service_name: &'a str,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    resource: &'a Map<String, Value>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    attributes: Map<String, Value>,
+}
+
+#[derive(Serialize)]
+struct MetricDoc<'a> {
+    signal: &'static str,
+    name: &'a str,
+    #[serde(rename = "type")]
+    metric_type: &'static str,
+    unit: &'a str,
+    timestamp_ns: u64,
+    value: Value,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    service_name: &'a str,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    resource: &'a Map<String, Value>,
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    attributes: Map<String, Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_monotonic: Option<bool>,
+}
 
 pub fn export_logs_to_messages(req: ExportLogsServiceRequest) -> Vec<ProducedMessage> {
     let mut messages = Vec::new();
@@ -36,26 +107,22 @@ pub fn export_logs_to_messages(req: ExportLogsServiceRequest) -> Vec<ProducedMes
             .unwrap_or("")
             .to_owned();
 
-        let resource_value = Value::Object(resource_attrs);
         for scope_logs in resource_logs.scope_logs {
             for record in scope_logs.log_records {
                 let body = record.body.as_ref().map(any_value_to_json);
-                let mut doc = json!({
-                    "signal": "log",
-                    "timestamp_ns": record.time_unix_nano,
-                    "observed_timestamp_ns": record.observed_time_unix_nano,
-                    "severity": severity_number_to_text(record.severity_number),
-                    "severity_text": record.severity_text,
-                    "body": body,
-                    "trace_id": bytes_to_hex(&record.trace_id),
-                    "span_id": bytes_to_hex(&record.span_id),
-                    "service_name": service_name,
-                    "resource": resource_value.clone(),
-                    "attributes": extract_attrs(&record.attributes),
-                });
-                if let Some(obj) = doc.as_object_mut() {
-                    obj.retain(|_, v| !v.is_null() && v != &Value::String(String::new()));
-                }
+                let doc = LogRecordDoc {
+                    signal: "log",
+                    timestamp_ns: record.time_unix_nano,
+                    observed_timestamp_ns: record.observed_time_unix_nano,
+                    severity: severity_number_to_text(record.severity_number),
+                    severity_text: &record.severity_text,
+                    body,
+                    trace_id: bytes_to_hex(&record.trace_id),
+                    span_id: bytes_to_hex(&record.span_id),
+                    service_name: &service_name,
+                    resource: &resource_attrs,
+                    attributes: extract_attrs(&record.attributes),
+                };
                 match serde_json::to_vec(&doc) {
                     Ok(payload) => messages.push(ProducedMessage {
                         id: None,
@@ -103,7 +170,6 @@ pub fn export_traces_to_messages(req: ExportTraceServiceRequest) -> Vec<Produced
             .unwrap_or("")
             .to_owned();
 
-        let resource_value = Value::Object(resource_attrs);
         for scope_spans in resource_spans.scope_spans {
             for span in scope_spans.spans {
                 let status_code = span
@@ -117,24 +183,21 @@ pub fn export_traces_to_messages(req: ExportTraceServiceRequest) -> Vec<Produced
                     .map(|s| s.message.as_str())
                     .unwrap_or_default();
 
-                let mut doc = json!({
-                    "signal": "trace",
-                    "trace_id": bytes_to_hex(&span.trace_id),
-                    "span_id": bytes_to_hex(&span.span_id),
-                    "parent_span_id": bytes_to_hex(&span.parent_span_id),
-                    "name": span.name,
-                    "kind": span_kind_to_text(span.kind),
-                    "start_time_ns": span.start_time_unix_nano,
-                    "end_time_ns": span.end_time_unix_nano,
-                    "status": status_code,
-                    "status_message": status_message,
-                    "service_name": service_name,
-                    "resource": resource_value.clone(),
-                    "attributes": extract_attrs(&span.attributes),
-                });
-                if let Some(obj) = doc.as_object_mut() {
-                    obj.retain(|_, v| !v.is_null() && v != &Value::String(String::new()));
-                }
+                let doc = SpanDoc {
+                    signal: "trace",
+                    trace_id: bytes_to_hex(&span.trace_id),
+                    span_id: bytes_to_hex(&span.span_id),
+                    parent_span_id: bytes_to_hex(&span.parent_span_id),
+                    name: &span.name,
+                    kind: span_kind_to_text(span.kind),
+                    start_time_ns: span.start_time_unix_nano,
+                    end_time_ns: span.end_time_unix_nano,
+                    status: status_code,
+                    status_message,
+                    service_name: &service_name,
+                    resource: &resource_attrs,
+                    attributes: extract_attrs(&span.attributes),
+                };
                 match serde_json::to_vec(&doc) {
                     Ok(payload) => messages.push(ProducedMessage {
                         id: None,
@@ -160,89 +223,67 @@ fn metric_to_data_points(
 ) -> Vec<ProducedMessage> {
     let mut messages = Vec::new();
 
-    let base = |time_ns: u64, value: Value, attrs: &[KeyValue], metric_type: &str| -> Value {
-        json!({
-            "signal": "metric",
-            "name": metric.name,
-            "type": metric_type,
-            "unit": metric.unit,
-            "timestamp_ns": time_ns,
-            "value": value,
-            "service_name": service_name,
-            "resource": resource_attrs,
-            "attributes": extract_attrs(attrs),
-        })
+    let mut build_and_push = |time_ns: u64, value: Value, attrs: &[KeyValue], metric_type: &'static str, is_monotonic: Option<bool>| {
+        let doc = MetricDoc {
+            signal: "metric",
+            name: &metric.name,
+            metric_type,
+            unit: &metric.unit,
+            timestamp_ns: time_ns,
+            value,
+            service_name,
+            resource: resource_attrs,
+            attributes: extract_attrs(attrs),
+            is_monotonic,
+        };
+        match serde_json::to_vec(&doc) {
+            Ok(payload) => messages.push(ProducedMessage {
+                id: None,
+                checksum: None,
+                timestamp: (time_ns != 0).then_some(time_ns),
+                origin_timestamp: None,
+                headers: None,
+                payload,
+            }),
+            Err(err) => warn!("Failed to serialize metric data point: {err}"),
+        }
     };
 
     match &metric.data {
         Some(metric::Data::Gauge(gauge)) => {
             for dp in &gauge.data_points {
                 let value = number_dp_value(&dp.value);
-                let doc = base(dp.time_unix_nano, value, &dp.attributes, "gauge");
-                push_metric_doc(doc, dp.time_unix_nano, &mut messages);
+                build_and_push(dp.time_unix_nano, value, &dp.attributes, "gauge", None);
             }
         }
         Some(metric::Data::Sum(sum)) => {
             for dp in &sum.data_points {
                 let value = number_dp_value(&dp.value);
-                let mut doc = base(dp.time_unix_nano, value, &dp.attributes, "sum");
-                if let Some(obj) = doc.as_object_mut() {
-                    obj.insert("is_monotonic".into(), Value::Bool(sum.is_monotonic));
-                }
-                push_metric_doc(doc, dp.time_unix_nano, &mut messages);
+                build_and_push(dp.time_unix_nano, value, &dp.attributes, "sum", Some(sum.is_monotonic));
             }
         }
         Some(metric::Data::Histogram(hist)) => {
             for dp in &hist.data_points {
-                let doc = base(
-                    dp.time_unix_nano,
-                    json!({ "count": dp.count, "sum": dp.sum }),
-                    &dp.attributes,
-                    "histogram",
-                );
-                push_metric_doc(doc, dp.time_unix_nano, &mut messages);
+                let value = json!({ "count": dp.count, "sum": dp.sum });
+                build_and_push(dp.time_unix_nano, value, &dp.attributes, "histogram", None);
             }
         }
         Some(metric::Data::ExponentialHistogram(eh)) => {
             for dp in &eh.data_points {
-                let doc = base(
-                    dp.time_unix_nano,
-                    json!({ "count": dp.count, "sum": dp.sum, "scale": dp.scale }),
-                    &dp.attributes,
-                    "exponential_histogram",
-                );
-                push_metric_doc(doc, dp.time_unix_nano, &mut messages);
+                let value = json!({ "count": dp.count, "sum": dp.sum, "scale": dp.scale });
+                build_and_push(dp.time_unix_nano, value, &dp.attributes, "exponential_histogram", None);
             }
         }
         Some(metric::Data::Summary(summary)) => {
             for dp in &summary.data_points {
-                let doc = base(
-                    dp.time_unix_nano,
-                    json!({ "count": dp.count, "sum": dp.sum }),
-                    &dp.attributes,
-                    "summary",
-                );
-                push_metric_doc(doc, dp.time_unix_nano, &mut messages);
+                let value = json!({ "count": dp.count, "sum": dp.sum });
+                build_and_push(dp.time_unix_nano, value, &dp.attributes, "summary", None);
             }
         }
         None => {}
     }
 
     messages
-}
-
-fn push_metric_doc(doc: Value, time_ns: u64, messages: &mut Vec<ProducedMessage>) {
-    match serde_json::to_vec(&doc) {
-        Ok(payload) => messages.push(ProducedMessage {
-            id: None,
-            checksum: None,
-            timestamp: (time_ns != 0).then_some(time_ns),
-            origin_timestamp: None,
-            headers: None,
-            payload,
-        }),
-        Err(err) => warn!("Failed to serialize metric data point: {err}"),
-    }
 }
 
 fn number_dp_value(value: &Option<number_data_point::Value>) -> Value {
