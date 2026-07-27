@@ -147,28 +147,27 @@ impl QuickwitSink {
                 self.index_id, self.id
             );
             Ok(())
-        } else if status == StatusCode::CONFLICT {
-            // Another instance beat us to it; the index exists, which is what we want.
-            info!(
-                "Quickwit index already exists (409): {} for connector ID: {}",
-                self.index_id, self.id
-            );
-            Ok(())
         } else {
             let reason = response.text().await.unwrap_or_default();
-            let err_type = if status.is_client_error() {
-                "Permanent client error"
+            if status == StatusCode::CONFLICT
+                || (status == StatusCode::BAD_REQUEST
+                    && reason.to_lowercase().contains("already exists"))
+            {
+                info!(
+                    "Quickwit index already exists ({status}): {} for connector ID: {}",
+                    self.index_id, self.id
+                );
+                Ok(())
             } else {
-                "Server error"
-            };
-            error!(
-                "{err_type} creating Quickwit index: {} for connector ID: {}. status: {status}, reason: {reason}",
-                self.index_id, self.id
-            );
-            Err(Error::InitError(format!(
-                "Failed to create index '{0}': {status} {reason}",
-                self.index_id
-            )))
+                error!(
+                    "Failed creating Quickwit index: {} for connector ID: {}. status: {status}, reason: {reason}",
+                    self.index_id, self.id
+                );
+                Err(Error::InitError(format!(
+                    "Failed to create index '{0}': {status} {reason}",
+                    self.index_id
+                )))
+            }
         }
     }
 
