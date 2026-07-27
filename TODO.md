@@ -13,7 +13,11 @@
 - [x] **#3517** `Merged` — COOP_TASKRUN / thread_pool decoupling
 - [x] **#3525** `Merged` — IggyConsumer InvalidOffset recovery (per-partition DashMap rebase)
 - [x] **#3529** `Merged` — OTLP/gRPC sink connector
-  - [ ] **Follow-up: Trace/Span ID validation fix** — Prepare and upstream trace/span ID length sanitization to the OTLP sink codebase (filtering out invalid trace/span ID sizes to avoid gRPC InvalidArgument blocks).
+  - [ ] **Follow-up PR: Trace/Span ID validation fix** — Open a new PR to upstream GitHub `apache/iggy` master with the trace/span ID length sanitization changes (filtering out invalid trace/span ID sizes to avoid gRPC InvalidArgument blocks).
+
+## Pending PRs to be opened on GitHub (apache/iggy)
+
+- [ ] **New PR: OTLP Sink Trace/Span Sanitization** — Open a new PR on GitHub to upstream the trace/span ID validation changes from the local `feat/otlp-sink-connector` branch to the remote `apache/iggy` master.
 
 ## High Priority Issues / Investigations
 
