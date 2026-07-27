@@ -26,7 +26,7 @@ use iggy_connector_sdk::{
 use reqwest::StatusCode;
 use reqwest::Url;
 use reqwest_middleware::ClientWithMiddleware;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use simd_json::OwnedValue;
 use tracing::{debug, error, info, warn};
 
@@ -34,10 +34,10 @@ sink_connector!(QuickwitSink);
 
 const DEFAULT_MAX_RETRIES: u32 = 3;
 const DEFAULT_RETRY_DELAY: &str = "200ms";
-const DEFAULT_MAX_RETRY_DELAY: &str = "5s";
+const DEFAULT_RETRY_MAX_DELAY: &str = "5s";
 const DEFAULT_MAX_OPEN_RETRIES: u32 = 5;
 const DEFAULT_OPEN_RETRY_MAX_DELAY: &str = "30s";
-const DEFAULT_REQUEST_TIMEOUT: &str = "30s";
+const DEFAULT_TIMEOUT: &str = "30s";
 
 #[derive(Debug)]
 pub struct QuickwitSink {
@@ -46,9 +46,11 @@ pub struct QuickwitSink {
     client: Option<ClientWithMiddleware>,
     verbose: bool,
     index_id: String,
+    base_url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QuickwitSinkConfig {
     pub url: String,
     /// Full Quickwit index config YAML, passed to `POST /api/v1/indexes` on first open.
@@ -57,10 +59,10 @@ pub struct QuickwitSinkConfig {
     pub verbose_logging: Option<bool>,
     pub max_retries: Option<u32>,
     pub retry_delay: Option<String>,
-    pub max_retry_delay: Option<String>,
+    pub retry_max_delay: Option<String>,
     pub max_open_retries: Option<u32>,
     pub open_retry_max_delay: Option<String>,
-    pub request_timeout: Option<String>,
+    pub timeout: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,12 +73,14 @@ struct IndexIdExtract {
 impl QuickwitSink {
     pub fn new(id: u32, config: QuickwitSinkConfig) -> Self {
         let verbose = config.verbose_logging.unwrap_or(false);
+        let base_url = config.url.trim_end_matches('/').to_owned();
         Self {
             id,
             config,
             client: None,
             verbose,
             index_id: String::new(),
+            base_url,
         }
     }
 
@@ -88,7 +92,7 @@ impl QuickwitSink {
 
     async fn has_index(&self) -> Result<bool, Error> {
         let client = self.client()?;
-        let url = format!("{}/api/v1/indexes/{}", self.config.url, self.index_id);
+        let url = format!("{}/api/v1/indexes/{}", self.base_url, self.index_id);
         let response = client
             .get(&url)
             .send()
@@ -112,7 +116,7 @@ impl QuickwitSink {
             self.index_id, self.id
         );
         let client = self.client()?;
-        let url = format!("{}/api/v1/indexes", self.config.url);
+        let url = format!("{}/api/v1/indexes", self.base_url);
         let response = client
             .post(&url)
             .header("Content-Type", "application/yaml")
@@ -141,20 +145,15 @@ impl QuickwitSink {
                 self.index_id, self.id
             );
             Ok(())
-        } else if status.is_client_error() {
-            let reason = response.text().await.unwrap_or_default();
-            error!(
-                "Permanent client error creating Quickwit index: {} for connector ID: {}. status: {status}, reason: {reason}",
-                self.index_id, self.id
-            );
-            Err(Error::InitError(format!(
-                "Failed to create index '{0}': {status} {reason}",
-                self.index_id
-            )))
         } else {
             let reason = response.text().await.unwrap_or_default();
+            let err_type = if status.is_client_error() {
+                "Permanent client error"
+            } else {
+                "Server error"
+            };
             error!(
-                "Server error creating Quickwit index: {} for connector ID: {}. status: {status}, reason: {reason}",
+                "{err_type} creating Quickwit index: {} for connector ID: {}. status: {status}, reason: {reason}",
                 self.index_id, self.id
             );
             Err(Error::InitError(format!(
@@ -166,14 +165,17 @@ impl QuickwitSink {
 
     pub async fn ingest(&self, messages: Vec<simd_json::OwnedValue>) -> Result<(), Error> {
         let client = self.client()?;
-        // At-least-once: Quickwit ingest carries no dedup key, so a retry after a
-        // 5xx/timeout that actually committed (commit=auto) double-writes those rows.
+        // At-least-once during transient retries, but at-most-once on final failure:
+        // Quickwit ingest carries no dedup key, so a retry after a transient 5xx/timeout
+        // that actually committed double-writes those rows. Conversely, if a batch permanently
+        // fails (e.g. 4xx client error or retries exhausted), the offset was already committed
+        // at poll, so the batch is silently dropped and never redelivered.
         let url = format!(
             "{}/api/v1/{}/ingest?commit=auto",
-            self.config.url, self.index_id
+            self.base_url, self.index_id
         );
         let messages_count = messages.len();
-        let mut ndjson = String::new();
+        let mut ndjson = String::with_capacity(messages_count * 512);
         for record in messages {
             if let Ok(json_str) = simd_json::to_string(&record) {
                 if !ndjson.is_empty() {
@@ -238,18 +240,15 @@ impl QuickwitSink {
                     let mut bytes_copy = bytes.clone();
                     match simd_json::from_slice::<OwnedValue>(&mut bytes_copy) {
                         Ok(value) => value,
-                        Err(_) => {
-                            if let Ok(text) = String::from_utf8(bytes.clone()) {
-                                simd_json::json!({
-                                    "data": text,
-                                    "data_type": "raw"
-                                })
-                            } else {
-                                simd_json::json!({
-                                    "data": general_purpose::STANDARD.encode(&bytes),
-                                    "data_type": "raw"
-                                })
-                            }
+                        Err(_) => match String::from_utf8(bytes) {
+                            Ok(text) => simd_json::json!({
+                                "data": text,
+                                "data_type": "raw"
+                            }),
+                            Err(err) => simd_json::json!({
+                                "data": general_purpose::STANDARD.encode(err.into_bytes()),
+                                "data_type": "raw"
+                            }),
                         }
                     }
                 }
@@ -279,9 +278,9 @@ impl Sink for QuickwitSink {
         self.index_id = parsed.index_id;
 
         let retry_delay = parse_duration(self.config.retry_delay.as_deref(), DEFAULT_RETRY_DELAY);
-        let max_retry_delay = parse_duration(
-            self.config.max_retry_delay.as_deref(),
-            DEFAULT_MAX_RETRY_DELAY,
+        let retry_max_delay = parse_duration(
+            self.config.retry_max_delay.as_deref(),
+            DEFAULT_RETRY_MAX_DELAY,
         );
         let max_open_retries = self
             .config
@@ -292,15 +291,15 @@ impl Sink for QuickwitSink {
             DEFAULT_OPEN_RETRY_MAX_DELAY,
         );
 
-        let request_timeout = parse_duration(
-            self.config.request_timeout.as_deref(),
-            DEFAULT_REQUEST_TIMEOUT,
+        let timeout = parse_duration(
+            self.config.timeout.as_deref(),
+            DEFAULT_TIMEOUT,
         );
         let raw_client = reqwest::Client::builder()
-            .timeout(request_timeout)
+            .timeout(timeout)
             .build()
             .map_err(|e| Error::InitError(format!("reqwest client: {e}")))?;
-        let health_url = Url::parse(&format!("{}/health/livez", self.config.url))
+        let health_url = Url::parse(&format!("{}/health/readyz", self.base_url))
             .map_err(|e| Error::InvalidConfigValue(format!("url: {e}")))?;
 
         check_connectivity_with_retry(
@@ -323,7 +322,7 @@ impl Sink for QuickwitSink {
                 .unwrap_or(DEFAULT_MAX_RETRIES)
                 .max(1),
             retry_delay,
-            max_retry_delay,
+            retry_max_delay,
             "Quickwit",
         ));
 
@@ -383,10 +382,10 @@ mod tests {
             verbose_logging: None,
             max_retries: None,
             retry_delay: None,
-            max_retry_delay: None,
+            retry_max_delay: None,
             max_open_retries: None,
             open_retry_max_delay: None,
-            request_timeout: None,
+            timeout: None,
         }
     }
 
