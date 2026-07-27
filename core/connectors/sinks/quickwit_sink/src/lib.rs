@@ -49,19 +49,28 @@ pub struct QuickwitSink {
     base_url: String,
 }
 
+/// Configuration for the Quickwit sink connector, deserialized from [plugin_config] in config.toml.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuickwitSinkConfig {
+    /// Target URL for the Quickwit service.
     pub url: String,
     /// Full Quickwit index config YAML, passed to `POST /api/v1/indexes` on first open.
     /// `index_id` is extracted from this YAML to build ingest URLs.
     pub index: String,
+    /// Enable verbose logging for ingested messages (default: false).
     pub verbose_logging: Option<bool>,
+    /// Maximum number of retries for transient ingest errors (default: 3).
     pub max_retries: Option<u32>,
+    /// Initial retry delay as a human-readable duration string, e.g. "200ms" (default: 200ms).
     pub retry_delay: Option<String>,
+    /// Maximum retry delay cap as a human-readable duration string, e.g. "5s" (default: 5s).
     pub retry_max_delay: Option<String>,
+    /// Maximum number of connectivity retries when opening the sink (default: 5).
     pub max_open_retries: Option<u32>,
+    /// Maximum retry delay cap when opening the sink, e.g. "30s" (default: 30s).
     pub open_retry_max_delay: Option<String>,
+    /// HTTP request timeout as a human-readable duration string, e.g. "30s" (default: 30s).
     pub timeout: Option<String>,
 }
 
