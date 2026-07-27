@@ -19,15 +19,15 @@ use crate::StorageFormat;
 use crate::convert;
 use iggy_connector_sdk::ProducedMessage;
 use opentelemetry_proto::tonic::collector::logs::v1::{
-    ExportLogsPartialSuccess, ExportLogsServiceRequest, ExportLogsServiceResponse,
+    ExportLogsServiceRequest, ExportLogsServiceResponse,
     logs_service_server::{LogsService, LogsServiceServer},
 };
 use opentelemetry_proto::tonic::collector::metrics::v1::{
-    ExportMetricsPartialSuccess, ExportMetricsServiceRequest, ExportMetricsServiceResponse,
+    ExportMetricsServiceRequest, ExportMetricsServiceResponse,
     metrics_service_server::{MetricsService, MetricsServiceServer},
 };
 use opentelemetry_proto::tonic::collector::trace::v1::{
-    ExportTracePartialSuccess, ExportTraceServiceRequest, ExportTraceServiceResponse,
+    ExportTraceServiceRequest, ExportTraceServiceResponse,
     trace_service_server::{TraceService, TraceServiceServer},
 };
 use prost::Message as ProstMessage;
@@ -102,13 +102,11 @@ impl LogsService for LogsServiceImpl {
         &self,
         request: Request<ExportLogsServiceRequest>,
     ) -> Result<Response<ExportLogsServiceResponse>, Status> {
-        let messages = encode_or_convert(request.into_inner(), self.format, "logs");
-        let rejected = send_messages(&self.tx, messages, "logs");
-        let partial_success = (rejected > 0).then(|| ExportLogsPartialSuccess {
-            rejected_log_records: rejected,
-            error_message: "channel full; records dropped".to_string(),
-        });
-        Ok(Response::new(ExportLogsServiceResponse { partial_success }))
+        let messages = encode_or_convert(request.into_inner(), self.format, "logs")?;
+        send_messages(&self.tx, messages, "logs")?;
+        Ok(Response::new(ExportLogsServiceResponse {
+            partial_success: None,
+        }))
     }
 }
 
@@ -118,14 +116,10 @@ impl MetricsService for MetricsServiceImpl {
         &self,
         request: Request<ExportMetricsServiceRequest>,
     ) -> Result<Response<ExportMetricsServiceResponse>, Status> {
-        let messages = encode_or_convert(request.into_inner(), self.format, "metrics");
-        let rejected = send_messages(&self.tx, messages, "metrics");
-        let partial_success = (rejected > 0).then(|| ExportMetricsPartialSuccess {
-            rejected_data_points: rejected,
-            error_message: "channel full; data points dropped".to_string(),
-        });
+        let messages = encode_or_convert(request.into_inner(), self.format, "metrics")?;
+        send_messages(&self.tx, messages, "metrics")?;
         Ok(Response::new(ExportMetricsServiceResponse {
-            partial_success,
+            partial_success: None,
         }))
     }
 }
@@ -136,14 +130,10 @@ impl TraceService for TraceServiceImpl {
         &self,
         request: Request<ExportTraceServiceRequest>,
     ) -> Result<Response<ExportTraceServiceResponse>, Status> {
-        let messages = encode_or_convert(request.into_inner(), self.format, "traces");
-        let rejected = send_messages(&self.tx, messages, "traces");
-        let partial_success = (rejected > 0).then(|| ExportTracePartialSuccess {
-            rejected_spans: rejected,
-            error_message: "channel full; spans dropped".to_string(),
-        });
+        let messages = encode_or_convert(request.into_inner(), self.format, "traces")?;
+        send_messages(&self.tx, messages, "traces")?;
         Ok(Response::new(ExportTraceServiceResponse {
-            partial_success,
+            partial_success: None,
         }))
     }
 }
@@ -170,26 +160,29 @@ impl IntoMessages for ExportTraceServiceRequest {
     }
 }
 
-fn encode_or_convert<R>(req: R, format: StorageFormat, signal: &str) -> Vec<ProducedMessage>
+/// Returns the messages to enqueue, or a gRPC error if the request cannot be
+/// serialized.
+fn encode_or_convert<R>(req: R, format: StorageFormat, signal: &str) -> Result<Vec<ProducedMessage>, Status>
 where
     R: ProstMessage + IntoMessages,
 {
     match format {
-        StorageFormat::Json => req.into_json_messages(),
+        StorageFormat::Json => Ok(req.into_json_messages()),
         StorageFormat::Proto => {
             let mut buf = Vec::new();
-            if let Err(e) = req.encode(&mut buf) {
+            req.encode(&mut buf).map_err(|e| {
                 warn!("Failed to encode {signal} proto: {e}");
-                return vec![];
-            }
-            vec![ProducedMessage {
+                Status::invalid_argument(format!("failed to encode {signal} proto: {e}"))
+            })?;
+            let message = ProducedMessage {
                 id: None,
                 checksum: None,
                 timestamp: None,
                 origin_timestamp: None,
                 headers: None,
                 payload: buf,
-            }]
+            };
+            Ok(vec![message])
         }
     }
 }
@@ -198,16 +191,28 @@ fn send_messages(
     tx: &mpsc::Sender<ProducedMessage>,
     messages: Vec<ProducedMessage>,
     signal: &str,
-) -> i64 {
-    let total = messages.len() as i64;
-    let mut dropped: i64 = 0;
+) -> Result<(), Status> {
+    if tx.capacity() < messages.len() {
+        warn!(
+            "OTLP ingest channel capacity ({}) is less than batch size ({}), asking {signal} client to retry",
+            tx.capacity(),
+            messages.len()
+        );
+        return Err(Status::resource_exhausted("ingest channel full"));
+    }
     for message in messages {
-        if tx.try_send(message).is_err() {
-            dropped += 1;
+        if let Err(err) = tx.try_send(message) {
+            return match err {
+                mpsc::error::TrySendError::Full(_) => {
+                    warn!("OTLP ingest channel full, asking {signal} client to retry");
+                    Err(Status::resource_exhausted("ingest channel full"))
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    warn!("OTLP ingest channel closed while receiving {signal}");
+                    Err(Status::unavailable("ingest channel closed"))
+                }
+            };
         }
     }
-    if dropped > 0 {
-        warn!("OTLP channel full, dropped {dropped}/{total} {signal} messages");
-    }
-    dropped
+    Ok(())
 }
