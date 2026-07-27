@@ -3,14 +3,27 @@
 ## Open PRs (apache/iggy)
 
 - [ ] **#3516** `S-waiting-on-review` — OTLP gRPC source connector
-  - `atharvalade` comments (stale diff, on old PR version): `try_send` drops data under backpressure — should be `send().await` + `RESOURCE_EXHAUSTED`; response missing `partial_success`. Address before pushing for re-review.
-- [ ] **#3517** `S-waiting-on-review` — COOP_TASKRUN / thread_pool decoupling
-- [ ] **#3523** `S-waiting-on-review` — quickwit_sink convention fix (409 absorb + request_timeout addressed)
-- [ ] **#3525** `S-waiting-on-review` — IggyConsumer InvalidOffset recovery
-  - `atharvalade` CHANGES_REQUESTED: per-partition concern addressed (DashMap); "5 features in one PR" addressed (rebased to SDK-only). **Reply on PR explaining this, request re-review.**
-- [ ] **#3529** `S-waiting-on-review` — OTLP/gRPC sink connector
-  - [ ] **Follow-up: Trace/Span ID validation fix** — After local verification on `yucemonitoring`, prepare a PR/patch to upstream to include the `sanitize_trace_request` and `sanitize_logs_request` changes (filtering out invalid trace/span ID sizes to avoid gRPC InvalidArgument blockages).
+  - Local branch: [feat/otlp-source-connector](file:///home/fatihyuce/work/projects/maya3/ng_sdn/iggy/core/connectors/sources/otlp_source/)
+  - Notes: Address backpressure comments (using `send().await` + `RESOURCE_EXHAUSTED` instead of `try_send` dropping, and add `partial_success` handling).
+- [ ] **#3523** `S-waiting-on-review` — quickwit_sink convention fix
+  - Local branch: [fix/quickwit-sink-convention](file:///home/fatihyuce/work/projects/maya3/ng_sdn/iggy/core/connectors/sinks/quickwit_sink/)
 
+## Closed / Merged PRs (Cleaned up & Synced)
+
+- [x] **#3517** `Merged` — COOP_TASKRUN / thread_pool decoupling
+- [x] **#3525** `Merged` — IggyConsumer InvalidOffset recovery (per-partition DashMap rebase)
+- [x] **#3529** `Merged` — OTLP/gRPC sink connector
+  - [ ] **Follow-up: Trace/Span ID validation fix** — Prepare and upstream trace/span ID length sanitization to the OTLP sink codebase (filtering out invalid trace/span ID sizes to avoid gRPC InvalidArgument blocks).
+
+## High Priority Issues / Investigations
+
+- [ ] **`PollingKind::First` returns `InvalidOffset(0)` over TCP but HTTP works** (InvalidOffset Bug)
+  - Bug description: HTTP `?strategy=first` works fine, but TCP binary protocol returns error 4100 (`InvalidOffset`) even when offset 0 is valid.
+  - Plan:
+    1. Reproduce deterministically (create topic, send messages, delete first segment, poll first over TCP vs HTTP).
+    2. Check `validate_checksums_and_offsets` behavior.
+    3. Resolve the `from_repr` u64 value loss in TCP client response deserialization.
+    4. Once fixed, update recovery path in PR #3525 to use `first()` instead of `last()`.
 
 ## Infrastructure
 
@@ -20,10 +33,10 @@
 
 ## TBD (open investigations)
 
-- [ ] **`PollingKind::First` returns `InvalidOffset(0)` over TCP but HTTP works** — HTTP `?strategy=first` returns offset 0 fine; TCP binary returns error 4100 even when offset 0 exists. Hypothesis: auto_commit + TCP handler interaction. See [[invalid-offset-tbd]]. Fix would let #3525 use `first()` instead of `last()`.
 - [ ] **OTLP sink proto decode spam** — after `last()` recovery, otlp_sink on `format=proto` hits old JSON messages: `invalid wire type`. Options: reset CG offset past JSON era, wait for retention, or add format auto-detection. See [[invalid-offset-tbd]].
 - [ ] **Iggy storage compression** — upstream feature request (gzip/zstd/snappy at segment level). See [[project-todo-iggy-compression]].
 
 ## Tracking
 
 - [ ] **`server-ng`** (Viewstamped Replication) maturity — for HA consideration.
+
