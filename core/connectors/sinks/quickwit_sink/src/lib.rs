@@ -182,15 +182,20 @@ impl QuickwitSink {
             "{}/api/v1/{}/ingest?commit=auto",
             self.base_url, self.index_id
         );
-        let messages_count = messages.len();
-        let mut ndjson = String::with_capacity(messages_count * 512);
+        let mut ndjson = String::with_capacity(messages.len() * 512);
+        let mut messages_count = 0;
         for record in messages {
             if let Ok(json_str) = simd_json::to_string(&record) {
                 if !ndjson.is_empty() {
                     ndjson.push('\n');
                 }
                 ndjson.push_str(&json_str);
+                messages_count += 1;
             }
+        }
+
+        if messages_count == 0 {
+            return Ok(());
         }
 
         let response = client
