@@ -73,3 +73,16 @@ Completed work, archived from CLAUDE.md handover blocks.
 - **OTLP Metrics Sink Fix Applied**: Solved a critical bug where `otlp_sink_metrics` was failing with `unimplemented` gRPC errors. Discovered that the `metrics` topic actually carries OTLP **traces** (forwarded by the collector's `traces/otlp` pipeline). Since Quickwit 0.8.2 does not support OTLP metrics but supports traces, updated the sink configuration to `signal = "traces"` and header `"qw-otel-traces-index" = "metrics3"`. All OTLP source and Quickwit sink instances are now healthy and consuming/exporting telemetry successfully.
 - **Confluence Guide Published**: Documented the steps to configure direct vcluster access in the Confluence page: [Vcluster k8s'e Ulasma](https://confluence.ulakhaberlesme.com.tr:8443/pages/viewpage.action?pageId=422805516) (MIL space).
 
+---
+
+## Session 18 (2026-07-28, Reviewer Feedback Resolved & Deployment Verified)
+
+- **PR #3516 & #3523 Reviewer Comments Addressed**:
+  - Address comments for OTLP Source: Added strict gRPC `RESOURCE_EXHAUSTED` backpressure check when capacity is exceeded instead of silent drops; replaced deep metadata clones with zero-copy reference structures (`LogRecordDoc`, `SpanDoc`, `MetricDoc`); handled serialization/decode errors as explicit gRPC validation failures.
+  - Address comments for Quickwit Sink: Switched pre-allocation to a safe heuristic `messages.len() * 256` to avoid high peak memory allocation while eliminating runtime heap expansion; fixed success logs overcounting by tracking actually serialized records; replaced `/health/livez` liveness check with `/health/readyz` readiness checks; added configurable `timeout` parameter (default 30s) to reqwest client builder.
+- **Git branches synced & pushed**: Merged both PR branch changes locally into `master`. Pushed local `master` to GitLab `ulak/master` and GitHub `fork/master`. Pushed `feat/otlp-source-connector` and `fix/quickwit-sink-convention` to GitHub `fork` remote to update open PRs.
+- **Bypassed runc masking bug on Jenkins**: Patched `push.sh` in the `anomaly` repository (on the `develop` branch) to build the connectors using native host Docker engine (`BUILDX_BUILDER=default DOCKER_BUILDKIT=1 docker build`). This successfully bypasses the `/proc/acpi` procfs masking failure on Linux Kernel 6.8.
+- **Jenkins build #225 and deploy (SUCCESS)**: Triggered Jenkins job #225, which built and pushed `iggy-connectors:20260727-094821-e1bd96212a47` and deployed it to the `yucemonitoring` cluster.
+- **Live Verification**: Verified pod logs; both OTLP telemetry (traces/logs/metrics) and NDJSON anomaly streams (`quickwit_sink`) initialized cleanly with zero errors.
+
+

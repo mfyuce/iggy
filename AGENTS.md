@@ -235,16 +235,16 @@ Created by server, connectors runtime, or tests. Gitignored. Safe to delete to r
 - Segment cleaner: `IGGY_DATA_MAINTENANCE_MESSAGES_CLEANER_ENABLED=true` -- already enabled in production.
 - Connectors in image: `otlp_source` (JSON/proto modes), `otlp_sink` (PR #3529), `quickwit_sink`.
 
-## READY FOR HANDOVER (2026-07-17, session 17)
+## READY FOR HANDOVER (2026-07-28, session 18)
 
-**Current state:** 
-- **OTLP Trace/Span Sanitization Deployed:** The local fix for tracing sanitization has been successfully deployed to `yucemonitoring` using the updated image `192.168.57.202:35000/iggy-connectors:20260716-155359-bab46328d556`. All OTLP source and Quickwit sink containers spawned successfully.
-- **OTLP Metrics Sink Fix Applied:** Discovered that the `metrics` topic in the `otel` stream actually carries OTLP **traces** data (forwarded by the collector's `traces/otlp` pipeline). Since Quickwit 0.8.2 does not support OTLP metrics but supports traces, the `otlp_sink_metrics` config in `iggy-connectors.yaml` was updated to `signal = "traces"` and header `"qw-otel-traces-index" = "metrics3"`. The pod was redeployed and all sink instances are now consuming/exporting telemetry successfully without any gRPC unimplemented errors.
-- **Direct Vcluster Access Configured:** Bypassed the expired Rancher API token block by patching the host cluster's `yucemonitoring` vcluster service to `NodePort` (assigned port `31633`). Extracted admin certificates from `vc-yucemonitoring` secret and generated a persistent, direct-access kubeconfig at `~/.kube/yucemonitoring.config` pointing to `https://10.20.4.31:31633`.
-- **Confluence Guide Published:** Documented the steps to configure direct vcluster access in the Confluence page: [Vcluster k8s'e Ulasma](https://confluence.ulakhaberlesme.com.tr:8443/pages/viewpage.action?pageId=422805516) (MIL space).
+**Current state:**
+- **PR #3516 & #3523 Reviewer Comments Resolved:** Address comments for OTLP Source (backpressure double-delivery, reference serialization, validation errors) and Quickwit Sink (allocation optimization using `messages.len() * 256` heuristic to avoid RAM duplication, readyz probe, timeout, success logs overcounting).
+- **GitLab & GitHub Fork Synced:** Merged both branches locally into `master`, pushed `master` to `ulak/master` GitLab. Pushed both branches to `fork` on GitHub to update PR #3516 and PR #3523.
+- **Jenkins Buildkit procfs bug bypassed:** Patched `push.sh` in `anomaly` repository (on `develop` branch) to build `iggy` using native host Docker engine to bypass the runc `/proc/acpi` masking bug on Linux Kernel 6.8.
+- **Successful Build & Rollout Deploy:** Jenkins Build #225 succeeded and rolled out image `iggy-connectors:20260727-094821-e1bd96212a47` to `yucemonitoring` vcluster. Pod runs healthy with 0 restarts and zero errors. Verified that both OTLP and NDJSON (anomaly stream) pipelines are running correctly.
 
 **Next steps:**
-1. Monitor the `iggy-connectors` pod logs to ensure the trace span sanitization warning logs are working correctly when malformed span/trace IDs are processed.
-2. Prepare and upstream the OTLP sink trace/span sanitization changes to PR #3529 now that local validation on `yucemonitoring` is completed successfully.
-3. Check and clean up the `test_logs/` directory if necessary, as it grows quickly during development.
+1. **Investigate and Solve `InvalidOffset` Bug:** Investigate why `PollingKind::First` returns `InvalidOffset(0)` over TCP but works fine over HTTP. Check `from_repr` u64 value loss in TCP client response deserialization.
+2. **Open PR for Trace/Span Sanitization:** Upstream the OTLP sink trace/span sanitization changes from the local `feat/otlp-sink-connector` branch to GitHub `apache/iggy/master` (added to TODO.md).
+3. **Clean up `test_logs/`:** Wipe if needed.
 
