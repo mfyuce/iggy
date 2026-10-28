@@ -7700,6 +7700,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "iggy_connector_otlp_sink"
+version = "0.5.1-edge.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "flate2",
+ "http 1.5.0",
+ "iggy_connector_sdk",
+ "opentelemetry-proto",
+ "prost",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tonic",
+ "tracing",
+]
+
+[[package]]
 name = "iggy_connector_postgres_sink"
 version = "0.5.1-edge.1"
 dependencies = [
