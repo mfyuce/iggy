@@ -35,15 +35,26 @@ use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Sta
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use tracing::warn;
+
+const TRACE_ID_LEN: usize = 16;
+const SPAN_ID_LEN: usize = 8;
 
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 
+/// Spans whose `trace_id` or `span_id` is missing or malformed are left out:
+/// an OTLP span without both IDs is invalid and a receiver may reject the
+/// whole request for it. Callers detect the omission by counting the spans.
 pub fn traces_from_json(messages: &[Value]) -> ExportTraceServiceRequest {
-    let groups = group_by_resource(messages.iter().map(|msg| {
+    let groups = group_by_resource(messages.iter().filter_map(|msg| {
+        let span = json_to_span(msg);
+        if span.trace_id.is_empty() || span.span_id.is_empty() {
+            return None;
+        }
         let resource = msg.get("resource").cloned().unwrap_or(Value::Null);
-        (resource, json_to_span(msg))
+        Some((resource, span))
     }));
 
     ExportTraceServiceRequest {
@@ -183,13 +194,9 @@ fn write_canonical(v: &Value, out: &mut String) {
 
 fn json_to_span(v: &Value) -> Span {
     Span {
-        trace_id: hex_to_bytes(v.get("trace_id").and_then(Value::as_str).unwrap_or("")),
-        span_id: hex_to_bytes(v.get("span_id").and_then(Value::as_str).unwrap_or("")),
-        parent_span_id: hex_to_bytes(
-            v.get("parent_span_id")
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-        ),
+        trace_id: id_field(v, "trace_id", TRACE_ID_LEN),
+        span_id: id_field(v, "span_id", SPAN_ID_LEN),
+        parent_span_id: id_field(v, "parent_span_id", SPAN_ID_LEN),
         name: v
             .get("name")
             .and_then(Value::as_str)
@@ -297,8 +304,8 @@ fn json_to_log_record(v: &Value) -> LogRecord {
             .to_owned(),
         body: v.get("body").map(json_to_any_value),
         attributes: json_obj_to_kv(v.get("attributes")),
-        trace_id: hex_to_bytes(v.get("trace_id").and_then(Value::as_str).unwrap_or("")),
-        span_id: hex_to_bytes(v.get("span_id").and_then(Value::as_str).unwrap_or("")),
+        trace_id: id_field(v, "trace_id", TRACE_ID_LEN),
+        span_id: id_field(v, "span_id", SPAN_ID_LEN),
         dropped_attributes_count: 0,
         flags: 0,
         ..Default::default()
@@ -360,23 +367,39 @@ fn json_to_any_value(v: &Value) -> AnyValue {
     AnyValue { value: Some(inner) }
 }
 
+/// Reads a hex-encoded trace or span ID. An ID that is not exactly `expected_len`
+/// bytes is invalid per the OTLP spec and corrupts trace correlation at the
+/// backend, so it is replaced by an empty ID (which the spec treats as unset).
+fn id_field(v: &Value, key: &str, expected_len: usize) -> Vec<u8> {
+    let Some(text) = v.get(key).and_then(Value::as_str).filter(|t| !t.is_empty()) else {
+        return vec![];
+    };
+    let bytes = hex_to_bytes(text);
+    if bytes.len() == expected_len {
+        return bytes;
+    }
+    warn!("Dropping malformed {key} {text:?}: expected {expected_len} bytes of hex");
+    vec![]
+}
+
+/// Decodes strict hex. Returns an empty vector for odd length or any
+/// non-hex character, instead of silently skipping the bad digits.
 fn hex_to_bytes(s: &str) -> Vec<u8> {
     // Iterate raw bytes, not string slices: a multibyte UTF-8 char landing on an
-    // even index would make `&s[i..i + 2]` panic on a non-char-boundary before
-    // any radix check could reject it. Treating each byte as a candidate hex
-    // digit rejects non-ASCII input gracefully (skipped) instead.
+    // even index would make `&s[i..i + 2]` panic on a non-char-boundary.
     let bytes = s.as_bytes();
     if !bytes.len().is_multiple_of(2) {
         return vec![];
     }
-    bytes
-        .chunks_exact(2)
-        .filter_map(|pair| {
-            let hi = (pair[0] as char).to_digit(16)?;
-            let lo = (pair[1] as char).to_digit(16)?;
-            Some((hi * 16 + lo) as u8)
-        })
-        .collect()
+    let mut decoded = Vec::with_capacity(bytes.len() / 2);
+    for [high, low] in bytes.as_chunks::<2>().0 {
+        let (Some(hi), Some(lo)) = ((*high as char).to_digit(16), (*low as char).to_digit(16))
+        else {
+            return vec![];
+        };
+        decoded.push((hi * 16 + lo) as u8);
+    }
+    decoded
 }
 
 fn span_kind_from_text(s: &str) -> i32 {
@@ -513,6 +536,64 @@ mod tests {
             body.value,
             Some(any_value::Value::StringValue("hello world".to_owned()))
         );
+    }
+
+    #[test]
+    fn given_invalid_hex_digit_should_return_empty_bytes() {
+        assert!(hex_to_bytes("zz").is_empty());
+        assert!(hex_to_bytes("abzz").is_empty());
+    }
+
+    #[test]
+    fn given_ids_of_wrong_length_should_be_dropped() {
+        let span = json_to_span(&serde_json::json!({
+            "trace_id": "0102",
+            "span_id": "0102030405060708",
+            "parent_span_id": "01",
+        }));
+        assert!(span.trace_id.is_empty(), "trace_id must be 16 bytes");
+        assert_eq!(span.span_id.len(), 8);
+        assert!(span.parent_span_id.is_empty(), "parent must be 8 bytes");
+    }
+
+    #[test]
+    fn given_span_with_missing_or_malformed_ids_should_be_left_out() {
+        let request = traces_from_json(&[
+            serde_json::json!({"name": "ok", "trace_id": "0102030405060708090a0b0c0d0e0f10", "span_id": "0102030405060708"}),
+            serde_json::json!({"name": "short-trace", "trace_id": "0102", "span_id": "0102030405060708"}),
+            serde_json::json!({"name": "no-span-id", "trace_id": "0102030405060708090a0b0c0d0e0f10"}),
+            serde_json::json!({"name": "not-hex", "trace_id": "zz02030405060708090a0b0c0d0e0f10", "span_id": "0102030405060708"}),
+        ]);
+        let names: Vec<&str> = request
+            .resource_spans
+            .iter()
+            .flat_map(|resource| &resource.scope_spans)
+            .flat_map(|scope| &scope.spans)
+            .map(|span| span.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["ok"]);
+    }
+
+    #[test]
+    fn given_ids_of_correct_length_should_be_kept() {
+        let span = json_to_span(&serde_json::json!({
+            "trace_id": "0102030405060708090a0b0c0d0e0f10",
+            "span_id": "0102030405060708",
+        }));
+        assert_eq!(span.trace_id.len(), 16);
+        assert_eq!(span.span_id.len(), 8);
+        let log = json_to_log_record(&serde_json::json!({
+            "trace_id": "0102030405060708090a0b0c0d0e0f10",
+            "span_id": "xyz",
+        }));
+        assert_eq!(log.trace_id.len(), 16);
+        assert!(log.span_id.is_empty());
+    }
+
+    #[test]
+    fn given_metric_without_name_should_be_skipped() {
+        let request = metrics_from_json(&[serde_json::json!({"value": 1.0})]);
+        assert!(request.resource_metrics.is_empty());
     }
 
     #[test]

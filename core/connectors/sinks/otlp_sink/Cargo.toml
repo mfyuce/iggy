@@ -37,6 +37,7 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 flate2 = { workspace = true }
 http = { workspace = true }
+humantime = { workspace = true }
 iggy_connector_sdk = { workspace = true }
 opentelemetry-proto = { workspace = true, features = [
     "gen-tonic",
@@ -46,8 +47,17 @@ opentelemetry-proto = { workspace = true, features = [
 ] }
 prost = { workspace = true }
 reqwest = { workspace = true }
+reqwest-middleware = { workspace = true }
+secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tonic = { workspace = true, features = ["transport", "gzip"] }
+tonic = { workspace = true, features = ["transport", "gzip", "tls-ring", "tls-webpki-roots"] }
 tracing = { workspace = true }
+
+[dev-dependencies]
+simd-json = { workspace = true }
+wiremock = { workspace = true }
+
+[lints]
+workspace = true

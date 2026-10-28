@@ -1,0 +1,68 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+
+type = "sink"
+key = "otlp"
+enabled = true
+version = 0
+name = "OTLP sink"
+path = "../../target/release/libiggy_connector_otlp_sink"
+plugin_config_format = "toml"
+verbose = false
+
+[[streams]]
+stream = "otel"
+topics = ["traces"]
+# "json" for format = "json" below, "raw" for format = "proto".
+schema = "json"
+batch_length = 1000
+# Wait up to this long for a batch instead of polling an idle topic.
+max_wait = "1s"
+consumer_group = "otlp_sink"
+
+[plugin_config]
+# Receiver endpoint, http or https. For transport = "http" this is the base URL
+# and /v1/<signal> is appended.
+endpoint = "http://localhost:7281"
+# "traces", "metrics" or "logs". One sink instance serves one signal.
+signal = "traces"
+# "grpc" (default) or "http".
+transport = "grpc"
+# "json" (default): messages come from otlp_source format = "json", stream schema "json".
+# "proto": messages are raw Export*ServiceRequest bytes from otlp_source format = "proto",
+# stream schema "raw". Each message is forwarded unchanged, one request per message.
+format = "json"
+# Gzip requests (gRPC message compression or HTTP Content-Encoding).
+compression = false
+# verbose_logging = false
+# JSON mode only: records per export request.
+# batch_size = 1000
+# Total export attempts including the first; 1 disables retries.
+# max_retries = 3
+# retry_delay = "1s"
+# retry_max_delay = "5s"
+# Startup connectivity attempts including the first.
+# max_open_retries = 10
+# open_retry_max_delay = "30s"
+# Timeout per export request and per connection attempt.
+# timeout = "30s"
+
+# Sent with every request as gRPC metadata or HTTP headers. Values are treated as
+# secrets and redacted from logs.
+[plugin_config.headers]
+# Quickwit routes OTLP data to an index with these headers.
+qw-otel-traces-index = "otel-traces-v0_7"
+# authorization = "Bearer replace_with_secret"
